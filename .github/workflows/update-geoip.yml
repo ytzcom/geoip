@@ -1,0 +1,333 @@
+name: Update GeoIP Databases
+
+on:
+  workflow_dispatch:
+    inputs:
+      notify_on_failure:
+        description: 'Send notifications on failure'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      debug_mode:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  schedule:
+    # Run every Monday at midnight UTC
+    - cron: '0 0 * * MON'
+
+jobs:
+  update-geoip:
+    runs-on: ubuntu-latest
+    outputs:
+      job-status: ${{ job.status }}
+    
+    env:
+      S3_BUCKET: ${{ secrets.S3_BUCKET || 'ytz-geoip' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y jq
+          pip install -r requirements.txt
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      
+      - name: Create temp directories
+        run: |
+          set -euo pipefail
+          mkdir -p temp/compressed/maxmind temp/compressed/ip2location
+          mkdir -p temp/raw/maxmind temp/raw/ip2location
+      
+      # Make scripts executable
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/*.sh
+      
+      # Download MaxMind databases
+      - name: Download MaxMind databases
+        id: download-maxmind
+        env:
+          PARALLEL_MODE: 'true'
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+        run: |
+          if [ "$DEBUG_MODE" = "true" ]; then
+            set -x
+          fi
+          ./scripts/download-maxmind.sh \
+            "temp/compressed/maxmind" \
+            "${{ secrets.MAXMIND_ACCOUNT_ID }}" \
+            "${{ secrets.MAXMIND_LICENSE_KEY }}" || {
+            echo "error=MaxMind download failed" >> $GITHUB_OUTPUT
+            exit 1
+          }
+      
+      # Download IP2Location databases
+      - name: Download IP2Location databases
+        id: download-ip2location
+        env:
+          PARALLEL_MODE: 'true'
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+        run: |
+          if [ "$DEBUG_MODE" = "true" ]; then
+            set -x
+          fi
+          ./scripts/download-ip2location.sh \
+            "temp/compressed/ip2location" \
+            "${{ secrets.IP2LOCATION_TOKEN }}" || {
+            echo "error=IP2Location download failed" >> $GITHUB_OUTPUT
+            exit 1
+          }
+      
+      
+      - name: Upload compressed files to S3
+        run: |
+          set -euo pipefail
+          echo "Uploading compressed files to S3..."
+          
+          # Upload MaxMind tar.gz files
+          ./scripts/upload-to-s3.sh \
+            "temp/compressed/maxmind" \
+            "${{ env.S3_BUCKET }}" \
+            "compressed/maxmind" \
+            "*.tar.gz" \
+            "application/gzip"
+          
+          # Upload IP2Location zip files
+          ./scripts/upload-to-s3.sh \
+            "temp/compressed/ip2location" \
+            "${{ env.S3_BUCKET }}" \
+            "compressed/ip2location" \
+            "*.zip" \
+            "application/zip"
+          
+          echo "✅ Compressed files uploaded to S3"
+      
+      - name: Extract databases
+        run: |
+          ./scripts/extract-databases.sh
+      
+      - name: Validate databases
+        run: |
+          set -euo pipefail
+          echo "Validating extracted databases..."
+          python scripts/validate-databases.py temp/raw/
+      
+      - name: Upload raw files to S3
+        run: |
+          set -euo pipefail
+          echo "Uploading raw files to S3..."
+          
+          # Upload MaxMind MMDB files
+          ./scripts/upload-to-s3.sh \
+            "temp/raw/maxmind" \
+            "${{ env.S3_BUCKET }}" \
+            "raw/maxmind" \
+            "*.mmdb" \
+            "application/octet-stream"
+          
+          # Upload IP2Location BIN files
+          ./scripts/upload-to-s3.sh \
+            "temp/raw/ip2location" \
+            "${{ env.S3_BUCKET }}" \
+            "raw/ip2location" \
+            "*.BIN" \
+            "application/octet-stream"
+          
+          echo "✅ Raw files uploaded to S3"
+      
+      - name: Generate file metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          echo "Generating file metadata..."
+          
+          # Get current timestamp
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          
+          # Count files
+          MAXMIND_COUNT=$(ls -1 temp/raw/maxmind/*.mmdb 2>/dev/null | wc -l)
+          IP2LOCATION_COUNT=$(ls -1 temp/raw/ip2location/* 2>/dev/null | wc -l)
+          TOTAL_COUNT=$((MAXMIND_COUNT + IP2LOCATION_COUNT))
+          echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+          echo "maxmind_count=$MAXMIND_COUNT" >> $GITHUB_OUTPUT
+          echo "ip2location_count=$IP2LOCATION_COUNT" >> $GITHUB_OUTPUT
+      
+      - name: Update README
+        run: |
+          set -euo pipefail
+          chmod +x scripts/update-readme.sh
+          ./scripts/update-readme.sh "${{ steps.metadata.outputs.timestamp }}" \
+                                    "${{ steps.metadata.outputs.total_count }}" \
+                                    "${{ steps.metadata.outputs.maxmind_count }}" \
+                                    "${{ steps.metadata.outputs.ip2location_count }}" \
+                                    "${{ env.S3_BUCKET }}"
+      
+      - name: Commit README updates
+        run: |
+          set -euo pipefail
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add README.md
+          git diff --staged --quiet || git commit -m "Update README with latest database status [skip ci]"
+          git push
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf temp/
+          echo "✅ Cleanup completed"
+      
+      # Capture job status for notifications
+      - name: Set job status
+        if: always()
+        run: echo "Job finished with status ${{ job.status }}"
+  
+  # Notification job that runs after the main job
+  notify-on-failure:
+    runs-on: ubuntu-latest
+    needs: update-geoip
+    if: ${{ failure() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.notify_on_failure != 'false')) }}
+    
+    steps:
+      - name: Create failure summary
+        run: |
+          echo "## ❌ GeoIP Update Workflow Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Actor:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Required Actions" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for error details" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify API credentials are valid and not expired" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check if MaxMind or IP2Location services are experiencing issues" >> $GITHUB_STEP_SUMMARY
+          echo "4. Ensure AWS S3 permissions are correctly configured" >> $GITHUB_STEP_SUMMARY
+      
+      # Send Slack notification if webhook is configured
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d @- << EOF
+          {
+            "text": "GeoIP Update Workflow Failed",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "❌ GeoIP Update Failed"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Repository:*\n<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Workflow Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Triggered by:*\n${{ github.event_name }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Time:*\n$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+                  }
+                ]
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Logs"
+                    },
+                    "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+      
+      # Create a GitHub issue if enabled
+      - name: Create GitHub issue
+        if: ${{ vars.CREATE_ISSUE_ON_FAILURE == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueTitle = `GeoIP Update Failed - Run #${context.runNumber}`;
+            const issueBody = `## GeoIP Update Workflow Failed
+            
+            **Workflow Run:** [#${context.runNumber}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            **Triggered by:** ${context.eventName}
+            **Actor:** ${context.actor}
+            **Time:** ${new Date().toISOString()}
+            
+            ### Error Summary
+            The automated GeoIP database update workflow has failed. Please check the workflow logs for detailed error information.
+            
+            ### Checklist
+            - [ ] Review workflow logs for error details
+            - [ ] Verify MaxMind credentials are valid
+            - [ ] Verify IP2Location token is valid
+            - [ ] Check AWS S3 permissions
+            - [ ] Verify external services are operational
+            - [ ] Re-run workflow after fixing issues
+            
+            ### Logs
+            [View full logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            
+            ---
+            *This issue was automatically created by the GeoIP Update workflow.*`;
+            
+            // Check if a similar issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'geoip-update-failure'
+            });
+            
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: issueBody,
+                labels: ['geoip-update-failure', 'automated']
+              });
+            }
