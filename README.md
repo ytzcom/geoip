@@ -1,6 +1,6 @@
 # GeoIP Database Updater
 
-![Workflow Status](https://github.com/ytzcom/geoip-updater/workflows/Update%20GeoIP%20Databases/badge.svg)
+![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
 ![Last Update](https://img.shields.io/badge/Last%20Update-2025--07--23%2014:25:03%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-7-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
@@ -185,7 +185,7 @@ pip install geoip2 IP2Location IP2Proxy
 ## 🤝 Contributing
 
 To trigger a manual update:
-1. Go to the [Actions tab](https://github.com/ytzcom/geoip-updater/actions)
+1. Go to the [Actions tab](https://github.com/ytzcom/geoip/actions)
 2. Select "Update GeoIP Databases"
 3. Click "Run workflow"
 
