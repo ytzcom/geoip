@@ -230,8 +230,12 @@ jobs:
       
       # Send Slack notification if webhook is configured
       - name: Send Slack notification
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true
         run: |
+          if [ -z "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "Slack webhook not configured, skipping notification"
+            exit 0
+          fi
           curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
             -H 'Content-Type: application/json' \
             -d @- << EOF
