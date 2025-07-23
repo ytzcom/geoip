@@ -41,8 +41,8 @@ When configured, failures will send a formatted message to your Slack channel wi
 
 To enable automatic issue creation on failure:
 
-1. Go to Settings → Variables → Actions
-2. Create a new variable named `CREATE_ISSUE_ON_FAILURE`
+1. Go to Settings → Secrets and variables → Actions → Variables
+2. Create a new repository variable named `CREATE_ISSUE_ON_FAILURE`
 3. Set the value to `true`
 
 When enabled, the workflow will:

@@ -30,7 +30,7 @@ jobs:
       job-status: ${{ job.status }}
     
     env:
-      S3_BUCKET: ${{ secrets.S3_BUCKET || 'ytz-geoip' }}
+      S3_BUCKET: ${{ vars.S3_BUCKET || 'ytz-geoip' }}
     
     steps:
       - name: Checkout repository
@@ -52,7 +52,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
       
       - name: Create temp directories
         run: |
@@ -77,7 +77,7 @@ jobs:
           fi
           ./scripts/download-maxmind.sh \
             "temp/compressed/maxmind" \
-            "${{ secrets.MAXMIND_ACCOUNT_ID }}" \
+            "${{ vars.MAXMIND_ACCOUNT_ID }}" \
             "${{ secrets.MAXMIND_LICENSE_KEY }}" || {
             echo "error=MaxMind download failed" >> $GITHUB_OUTPUT
             exit 1

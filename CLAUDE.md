@@ -79,11 +79,18 @@ export S3_BUCKET=your-bucket-name
 - Workflow creates GitHub issues on failure if CREATE_ISSUE_ON_FAILURE is set
 - Each script uses `set -euo pipefail` for strict error handling
 
-## Required Secrets
+## Required Configuration
 
+### Secrets (sensitive values)
 GitHub repository must have these secrets configured:
-- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: For S3 uploads
-- `MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY`: For MaxMind downloads
-- `IP2LOCATION_TOKEN`: For IP2Location downloads
-- `S3_BUCKET` (optional): Custom S3 bucket name
-- `SLACK_WEBHOOK_URL` (optional): For failure notifications
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: AWS credentials for S3 uploads
+- `MAXMIND_LICENSE_KEY`: MaxMind API authentication key
+- `IP2LOCATION_TOKEN`: IP2Location API token
+- `SLACK_WEBHOOK_URL` (optional): Slack webhook for failure notifications
+
+### Variables (non-sensitive configuration)
+GitHub repository can have these variables configured:
+- `S3_BUCKET`: Custom S3 bucket name (defaults to 'ytz-geoip')
+- `AWS_REGION`: AWS region (defaults to 'us-east-1')
+- `MAXMIND_ACCOUNT_ID`: MaxMind account identifier
+- `CREATE_ISSUE_ON_FAILURE`: Set to 'true' to create GitHub issues on failure

@@ -184,30 +184,40 @@ pip install geoip2 IP2Location IP2Proxy
 
 ## ⚙️ Configuration
 
-### S3 Bucket Configuration
+### GitHub Configuration
 
-By default, the workflow uses the `ytz-geoip` S3 bucket. To use a different bucket:
+Configure the following in your GitHub repository settings:
 
-1. Set the `S3_BUCKET` secret in your GitHub repository settings
-2. Ensure your AWS credentials have the necessary permissions for the bucket
-3. The bucket should allow public read access for distribution
-
-### Environment Variables
-
-See `.env.example` for all available configuration options:
-- `S3_BUCKET`: Your S3 bucket name (defaults to `ytz-geoip`)
+#### Secrets (Settings → Secrets and variables → Actions → Secrets)
 - `AWS_ACCESS_KEY_ID`: AWS access key with S3 permissions
 - `AWS_SECRET_ACCESS_KEY`: AWS secret key
-- `MAXMIND_ACCOUNT_ID`: MaxMind account ID
 - `MAXMIND_LICENSE_KEY`: MaxMind license key
 - `IP2LOCATION_TOKEN`: IP2Location download token
+- `SLACK_WEBHOOK_URL` (optional): Slack webhook URL for notifications
+
+#### Variables (Settings → Secrets and variables → Actions → Variables)
+- `S3_BUCKET`: Your S3 bucket name (defaults to `ytz-geoip`)
+- `AWS_REGION`: AWS region (defaults to `us-east-1`)
+- `MAXMIND_ACCOUNT_ID`: MaxMind account ID
+- `CREATE_ISSUE_ON_FAILURE`: Set to `true` to create GitHub issues on failure
+
+### S3 Bucket Requirements
+
+The S3 bucket should:
+1. Allow public read access for distribution
+2. Have appropriate CORS configuration if needed
+3. Be accessible with the provided AWS credentials
+
+### Local Development
+
+See `.env.example` for all configuration options when running locally.
 
 ## 🔔 Notifications
 
 The workflow includes automatic failure notifications:
 - **GitHub Actions Summary**: Always created on failure with detailed error information
 - **Slack Notifications**: Configure via `SLACK_WEBHOOK_URL` secret
-- **GitHub Issues**: Enable via `CREATE_ISSUE_ON_FAILURE` variable
+- **GitHub Issues**: Enable via `CREATE_ISSUE_ON_FAILURE` variable (set to `true`)
 
 See [docs/notifications.md](docs/notifications.md) for setup instructions.
 
