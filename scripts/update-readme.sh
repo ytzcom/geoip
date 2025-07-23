@@ -9,6 +9,9 @@ MAXMIND_COUNT="$3"
 IP2LOCATION_COUNT="$4"
 S3_BUCKET="${5:-ytz-geoip}"
 
+# Create URL-encoded version of timestamp for badge (replace spaces with %20 and escape dashes)
+TIMESTAMP_BADGE=$(echo "$TIMESTAMP" | sed 's/ /%20/g' | sed 's/-/--/g')
+
 # Get file sizes from S3
 echo "Fetching file sizes from S3..."
 
@@ -46,7 +49,7 @@ cat > README.md << 'EOF'
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip-updater/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-TIMESTAMP_PLACEHOLDER-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-TIMESTAMP_BADGE_PLACEHOLDER-blue)
 ![Database Count](https://img.shields.io/badge/Databases-TOTAL_PLACEHOLDER-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-MAXMIND_PLACEHOLDER-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-IP2LOCATION_PLACEHOLDER-purple)
@@ -253,6 +256,7 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 EOF
 
 # Replace placeholders with actual values
+sed -i.bak "s/TIMESTAMP_BADGE_PLACEHOLDER/${TIMESTAMP_BADGE}/g" README.md
 sed -i.bak "s/TIMESTAMP_PLACEHOLDER/${TIMESTAMP}/g" README.md
 sed -i.bak "s/TOTAL_PLACEHOLDER/${TOTAL_COUNT}/g" README.md
 sed -i.bak "s/MAXMIND_PLACEHOLDER/${MAXMIND_COUNT}/g" README.md
