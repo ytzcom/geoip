@@ -48,7 +48,7 @@ PX2_BIN_SIZE=$(get_file_size "$S3_BUCKET" "raw/ip2location/IP2PROXY-IP-PROXYTYPE
 cat > README.md << 'EOF'
 # GeoIP Database Updater
 
-![Workflow Status](https://github.com/ytzcom/geoip-updater/workflows/Update%20GeoIP%20Databases/badge.svg)
+![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
 ![Last Update](https://img.shields.io/badge/Last%20Update-TIMESTAMP_BADGE_PLACEHOLDER-blue)
 ![Database Count](https://img.shields.io/badge/Databases-TOTAL_PLACEHOLDER-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-MAXMIND_PLACEHOLDER-orange)
@@ -233,7 +233,7 @@ pip install geoip2 IP2Location IP2Proxy
 ## 🤝 Contributing
 
 To trigger a manual update:
-1. Go to the [Actions tab](https://github.com/ytzcom/geoip-updater/actions)
+1. Go to the [Actions tab](https://github.com/ytzcom/geoip/actions)
 2. Select "Update GeoIP Databases"
 3. Click "Run workflow"
 
