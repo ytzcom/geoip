@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip-updater/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-Not%20Yet%20Run-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2025-07-23 14:25:03 UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-7-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-3-purple)
@@ -56,13 +56,13 @@ Compressed archives are also available:
 
 | Database | Provider | Format | Size | Description |
 |----------|----------|--------|------|-------------|
-| GeoIP2-City | MaxMind | MMDB | TBD | City-level IP geolocation data |
-| GeoIP2-Country | MaxMind | MMDB | TBD | Country-level IP geolocation data |
-| GeoIP2-ISP | MaxMind | MMDB | TBD | ISP and organization data |
-| GeoIP2-Connection-Type | MaxMind | MMDB | TBD | Connection type data |
-| DB23 IPv4 | IP2Location | BIN | TBD | Comprehensive IPv4 geolocation data |
-| DB23 IPv6 | IP2Location | BIN | TBD | Comprehensive IPv6 geolocation data |
-| PX2 IPv4 | IP2Location | BIN | TBD | IPv4 proxy detection data |
+| GeoIP2-City | MaxMind | MMDB | 115MB | City-level IP geolocation data |
+| GeoIP2-Country | MaxMind | MMDB | 9MB | Country-level IP geolocation data |
+| GeoIP2-ISP | MaxMind | MMDB | 17MB | ISP and organization data |
+| GeoIP2-Connection-Type | MaxMind | MMDB | 11MB | Connection type data |
+| DB23 IPv4 | IP2Location | BIN | 633MB | Comprehensive IPv4 geolocation data |
+| DB23 IPv6 | IP2Location | BIN | 805MB | Comprehensive IPv6 geolocation data |
+| PX2 IPv4 | IP2Location | BIN | 193MB | IPv4 proxy detection data |
 
 ## 🔧 Usage Examples
 
@@ -182,52 +182,12 @@ pip install geoip2 IP2Location IP2Proxy
 - S3 bucket has public read access for easy distribution
 - Original database licenses apply - ensure compliance with MaxMind and IP2Location terms
 
-## ⚙️ Configuration
-
-### GitHub Configuration
-
-Configure the following in your GitHub repository settings:
-
-#### Secrets (Settings → Secrets and variables → Actions → Secrets)
-- `AWS_ACCESS_KEY_ID`: AWS access key with S3 permissions
-- `AWS_SECRET_ACCESS_KEY`: AWS secret key
-- `MAXMIND_LICENSE_KEY`: MaxMind license key
-- `IP2LOCATION_TOKEN`: IP2Location download token
-- `SLACK_WEBHOOK_URL` (optional): Slack webhook URL for notifications
-
-#### Variables (Settings → Secrets and variables → Actions → Variables)
-- `S3_BUCKET`: Your S3 bucket name (defaults to `ytz-geoip`)
-- `AWS_REGION`: AWS region (defaults to `us-east-1`)
-- `MAXMIND_ACCOUNT_ID`: MaxMind account ID
-- `CREATE_ISSUE_ON_FAILURE`: Set to `true` to create GitHub issues on failure
-
-### S3 Bucket Requirements
-
-The S3 bucket should:
-1. Allow public read access for distribution
-2. Have appropriate CORS configuration if needed
-3. Be accessible with the provided AWS credentials
-
-### Local Development
-
-See `.env.example` for all configuration options when running locally.
-
-## 🔔 Notifications
-
-The workflow includes automatic failure notifications:
-- **GitHub Actions Summary**: Always created on failure with detailed error information
-- **Slack Notifications**: Configure via `SLACK_WEBHOOK_URL` secret
-- **GitHub Issues**: Enable via `CREATE_ISSUE_ON_FAILURE` variable (set to `true`)
-
-See [docs/notifications.md](docs/notifications.md) for setup instructions.
-
 ## 🤝 Contributing
 
 To trigger a manual update:
 1. Go to the [Actions tab](https://github.com/ytzcom/geoip-updater/actions)
 2. Select "Update GeoIP Databases"
 3. Click "Run workflow"
-4. Optionally configure notification and debug settings
 
 ## 📄 License
 
@@ -240,8 +200,8 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 
 - [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases)
 - [IP2Location](https://www.ip2location.com/)
-- [Default S3 Bucket](https://ytz-geoip.s3.amazonaws.com/)
+- [S3 Bucket](https://ytz-geoip.s3.amazonaws.com/)
 
 ---
 
-**Last Update:** Not Yet Run
+**Last Update:** 2025-07-23 14:25:03 UTC
