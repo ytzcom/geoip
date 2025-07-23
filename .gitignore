@@ -63,3 +63,6 @@ test_data/
 # Backup files
 *.bak
 *.backup
+
+# Claude configuration
+.claude/settings.local.json
