@@ -14,6 +14,19 @@ Databases are automatically updated **every Monday at midnight UTC**.
 
 ## 🚀 Quick Start
 
+### Use as GitHub Action
+
+The easiest way to use GeoIP databases in your GitHub workflows:
+
+```yaml
+- name: Setup GeoIP databases
+  uses: ytzcom/geoip@v1
+  with:
+    api-key: ${{ secrets.GEOIP_API_KEY }}
+```
+
+This action automatically downloads and caches the databases for you. See the [Action Setup Guide](docs/action-setup.md) for detailed configuration options.
+
 ### Direct Download Links
 
 #### MaxMind Databases (MMDB Format)
@@ -179,8 +192,18 @@ pip install geoip2 IP2Location IP2Proxy
 ## 🔐 Security
 
 - All databases are validated before upload to ensure integrity
-- S3 bucket has public read access for easy distribution
+- GitHub Action requires API key authentication for controlled access
+- Pre-signed URLs expire after 1 hour for secure downloads
 - Original database licenses apply - ensure compliance with MaxMind and IP2Location terms
+
+### API Key Access
+
+For automated access via GitHub Action:
+1. Request an API key by opening an issue
+2. Store it as a GitHub secret named `GEOIP_API_KEY`
+3. Use the action as shown in the Quick Start section
+
+Direct S3 downloads remain available for manual/one-time use.
 
 ## 🤝 Contributing
 
