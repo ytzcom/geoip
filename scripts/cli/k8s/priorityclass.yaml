@@ -1,0 +1,22 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: batch-medium-priority
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: priorityclass
+value: 500
+globalDefault: false
+description: "Medium priority for batch workloads like GeoIP updates"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: batch-low-priority
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: priorityclass
+value: 100
+globalDefault: false
+description: "Low priority for non-critical batch workloads"
+preemptionPolicy: PreemptLowerPriority

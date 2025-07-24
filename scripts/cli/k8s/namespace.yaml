@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: geoip-system
+  labels:
+    name: geoip-system
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/part-of: geoip-system

@@ -1,0 +1,53 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: geoip-updater
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: geoip-updater
+      app.kubernetes.io/component: pod
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # No ingress needed for CronJob
+  ingress: []
+  
+  # Egress rules
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS to external APIs
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Optional: Allow access to specific API Gateway
+  # - to:
+  #   - ipBlock:
+  #       cidr: 52.84.0.0/15  # CloudFront/API Gateway range
+  #   ports:
+  #   - protocol: TCP
+  #     port: 443

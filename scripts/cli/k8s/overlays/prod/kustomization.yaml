@@ -1,0 +1,83 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: geoip-system
+
+# Base resources
+resources:
+  - ../../
+
+# Common labels for prod
+commonLabels:
+  environment: production
+
+# Production-specific patches
+patches:
+  # Higher resource limits in prod
+  - target:
+      kind: CronJob
+      name: geoip-updater
+    patch: |-
+      - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+  
+  # Larger storage in prod
+  - target:
+      kind: PersistentVolumeClaim
+      name: geoip-data
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 5Gi
+  
+  # Add node affinity for prod
+  - target:
+      kind: CronJob
+      name: geoip-updater
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/affinity
+        value:
+          nodeAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                - key: workload-type
+                  operator: In
+                  values:
+                  - batch
+  
+  # Add pod disruption budget
+  - target:
+      kind: CronJob
+      name: geoip-updater
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/tolerations
+        value:
+        - key: "batch"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+
+# Production image
+images:
+  - name: python
+    newName: your-registry/geoip-updater
+    newTag: v1.0.0-prod
+
+# Use external secret operator or sealed secrets
+# secretGenerator:
+#   - name: geoip-api-credentials
+#     behavior: replace
+#     files:
+#       - secrets/api-key
+#       - secrets/api-endpoint
