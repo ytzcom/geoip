@@ -1,0 +1,115 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "ytzcom"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+
+  # Docker images in main Dockerfiles
+  - package-ecosystem: "docker"
+    directory: "/scripts/cli/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "ytzcom"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+
+  # Docker images in Kubernetes Dockerfiles
+  - package-ecosystem: "docker"
+    directory: "/scripts/cli/k8s"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "ytzcom"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "kubernetes"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "ytzcom"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      # Add any dependencies to ignore here
+      # - dependency-name: "some-package"
+      #   versions: ["1.x", "2.x"]
+
+  # Python dependencies for CLI
+  - package-ecosystem: "pip"
+    directory: "/scripts/cli"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "ytzcom"
+    labels:
+      - "dependencies"
+      - "python"
+      - "cli"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # Go modules
+  - package-ecosystem: "gomod"
+    directory: "/scripts/cli/go"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "ytzcom"
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+# Security updates configuration
+# Dependabot will automatically create PRs for security updates
+# regardless of the schedule, with higher priority
