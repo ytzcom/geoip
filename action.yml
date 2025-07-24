@@ -1,0 +1,331 @@
+name: 'GeoIP Database Cache'
+description: 'Download and cache GeoIP databases from S3 with API key authentication'
+author: 'YTZ'
+branding:
+  icon: 'globe'
+  color: 'blue'
+
+inputs:
+  api-key:
+    description: 'API key for accessing GeoIP databases'
+    required: true
+  path:
+    description: 'Path to store GeoIP databases'
+    required: false
+    default: './geoip'
+  databases:
+    description: 'Comma-separated list of databases to download (or "all")'
+    required: false
+    default: 'all'
+  cache-key-prefix:
+    description: 'Prefix for cache key'
+    required: false
+    default: 'geoip'
+  cache-refresh:
+    description: 'Cache refresh period: daily, weekly, monthly'
+    required: false
+    default: 'weekly'
+  auth-endpoint:
+    description: 'Authentication endpoint URL'
+    required: false
+    default: 'https://api.ytz-geoip.com/v1/auth'
+  validate:
+    description: 'Validate downloaded files'
+    required: false
+    default: 'true'
+  fail-on-error:
+    description: 'Fail the action if download or validation fails'
+    required: false
+    default: 'true'
+
+outputs:
+  cache-hit:
+    description: 'Whether cache was hit'
+    value: ${{ steps.cache.outputs.cache-hit }}
+  path:
+    description: 'Path where databases are stored'
+    value: ${{ inputs.path }}
+  databases-downloaded:
+    description: 'List of databases that were downloaded'
+    value: ${{ steps.download.outputs.databases || steps.cache-list.outputs.databases }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check dependencies
+      shell: bash
+      run: |
+        echo "🔍 Checking required dependencies..."
+        
+        # Check for jq
+        if ! command -v jq &> /dev/null; then
+          echo "❌ Error: jq is not installed"
+          echo "jq is required for JSON processing in this action"
+          echo ""
+          echo "To install jq:"
+          echo "  - Ubuntu/Debian: sudo apt-get install jq"
+          echo "  - macOS: brew install jq"
+          echo "  - GitHub Actions Ubuntu: jq is pre-installed"
+          echo ""
+          echo "For more information: https://stedolan.github.io/jq/"
+          exit 1
+        fi
+        
+        echo "✅ jq version: $(jq --version)"
+        
+        # Check for curl
+        if ! command -v curl &> /dev/null; then
+          echo "❌ Error: curl is not installed"
+          exit 1
+        fi
+        
+        echo "✅ All dependencies are available"
+
+    - name: Generate cache key
+      id: cache-key
+      shell: bash
+      run: |
+        # Generate time-based cache key
+        case "${{ inputs.cache-refresh }}" in
+          daily)
+            CACHE_KEY="${{ inputs.cache-key-prefix }}-${{ runner.os }}-$(date +%Y-%j)"
+            ;;
+          weekly)
+            CACHE_KEY="${{ inputs.cache-key-prefix }}-${{ runner.os }}-$(date +%Y-W%V)"
+            ;;
+          monthly)
+            CACHE_KEY="${{ inputs.cache-key-prefix }}-${{ runner.os }}-$(date +%Y-%m)"
+            ;;
+          *)
+            echo "Invalid cache-refresh value: ${{ inputs.cache-refresh }}"
+            exit 1
+            ;;
+        esac
+        echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
+        echo "cache-key=$CACHE_KEY" >> $GITHUB_OUTPUT
+        echo "📅 Cache key: $CACHE_KEY"
+
+    - name: Check cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ env.CACHE_KEY }}
+        enableCrossOsArchive: true
+
+    - name: List cached databases
+      id: cache-list
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        echo "✅ Using cached GeoIP databases"
+        if [ -d "${{ inputs.path }}" ]; then
+          DATABASES=$(ls -1 "${{ inputs.path }}" | grep -E '\.(mmdb|BIN)$' | tr '\n' ',' | sed 's/,$//')
+          echo "databases=$DATABASES" >> $GITHUB_OUTPUT
+          echo "📦 Cached databases: $DATABASES"
+        fi
+
+    - name: Create directory
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p "${{ inputs.path }}"
+        echo "📁 Created directory: ${{ inputs.path }}"
+
+    - name: Authenticate and get download URLs
+      id: auth
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "🔐 Authenticating with GeoIP API..."
+        
+        # Set up cleanup trap
+        cleanup() {
+          rm -f /tmp/download-urls.json 2>/dev/null || true
+          rm -f /tmp/download_results_*.txt 2>/dev/null || true
+        }
+        trap cleanup EXIT
+        
+        # Prepare request body
+        if [ "${{ inputs.databases }}" = "all" ]; then
+          DATABASES_JSON='{"databases": "all"}'
+        else
+          # Convert comma-separated list to JSON array
+          DATABASES_JSON=$(echo "${{ inputs.databases }}" | jq -R 'split(",") | map(select(length > 0)) | {databases: .}')
+        fi
+        
+        # Call auth API with retry logic
+        RETRY_COUNT=0
+        MAX_RETRIES=3
+        RETRY_DELAY=2
+        AUTH_SUCCESS=false
+        
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$AUTH_SUCCESS" = "false" ]; do
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ inputs.auth-endpoint }}" \
+            -H "X-API-Key: ${{ inputs.api-key }}" \
+            -H "Content-Type: application/json" \
+            -d "$DATABASES_JSON" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            2>/dev/null || echo -e "\n000")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            AUTH_SUCCESS=true
+          else
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ "$RETRY_COUNT" -lt "$MAX_RETRIES" ]; then
+              echo "⚠️  Authentication failed with status code: $HTTP_CODE, retrying in ${RETRY_DELAY}s (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+              sleep $RETRY_DELAY
+              # Exponential backoff
+              RETRY_DELAY=$((RETRY_DELAY * 2))
+            else
+              echo "❌ Authentication failed with status code: $HTTP_CODE after $MAX_RETRIES attempts"
+              echo "Response: $BODY"
+              if [ "${{ inputs.fail-on-error }}" = "true" ]; then
+                exit 1
+              fi
+            fi
+          fi
+        done
+        
+        if [ "$AUTH_SUCCESS" != "true" ]; then
+          echo "❌ Authentication failed after all retry attempts"
+          if [ "${{ inputs.fail-on-error }}" = "true" ]; then
+            exit 1
+          fi
+        fi
+        
+        echo "$BODY" > /tmp/download-urls.json
+        echo "✅ Authentication successful"
+
+    - name: Download databases
+      id: download
+      if: steps.cache.outputs.cache-hit != 'true' && steps.auth.outcome == 'success'
+      shell: bash
+      run: |
+        cd "${{ inputs.path }}"
+        echo "📥 Downloading GeoIP databases..."
+        
+        # Create temporary file for tracking results
+        RESULTS_FILE="/tmp/download_results_$$.txt"
+        touch "$RESULTS_FILE"
+        
+        # Download each database in parallel with retry logic
+        jq -r 'to_entries[] | "\(.key)|\(.value)"' /tmp/download-urls.json | \
+        while IFS='|' read -r name url; do
+          (
+            echo "⏳ Downloading $name..."
+            RETRY_COUNT=0
+            MAX_RETRIES=3
+            RETRY_DELAY=5
+            
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if curl -L -f -o "$name" "$url" --connect-timeout 30 --max-time 300 2>/dev/null; then
+                echo "✅ Downloaded $name"
+                echo "SUCCESS:$name" >> "$RESULTS_FILE"
+                break
+              else
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "⚠️  Download failed for $name, retrying in ${RETRY_DELAY}s (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+                  sleep $RETRY_DELAY
+                else
+                  echo "❌ Failed to download $name after $MAX_RETRIES attempts"
+                  echo "FAILURE:$name" >> "$RESULTS_FILE"
+                fi
+              fi
+            done
+          ) &
+        done
+        
+        # Wait for all downloads to complete
+        wait
+        
+        # Process results
+        DOWNLOADS=$(grep -c "SUCCESS:" "$RESULTS_FILE" 2>/dev/null || echo "0")
+        FAILURES=$(grep -c "FAILURE:" "$RESULTS_FILE" 2>/dev/null || echo "0")
+        DATABASES=$(grep "SUCCESS:" "$RESULTS_FILE" 2>/dev/null | cut -d: -f2 | tr '\n' ',' | sed 's/,$//')
+        
+        # Clean up temporary file
+        rm -f "$RESULTS_FILE"
+        
+        # Set output
+        echo "databases=$DATABASES" >> $GITHUB_OUTPUT
+        
+        echo "📊 Download summary: $DOWNLOADS successful, $FAILURES failed"
+        
+        if [ "$FAILURES" -gt 0 ] && [ "${{ inputs.fail-on-error }}" = "true" ]; then
+          exit 1
+        fi
+
+    - name: Install validation dependencies
+      if: inputs.validate == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
+      shell: bash
+      run: |
+        echo "📦 Installing validation dependencies..."
+        pip install --quiet geoip2 IP2Location IP2Proxy
+
+    - name: Download validation script
+      if: inputs.validate == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
+      shell: bash
+      run: |
+        echo "📥 Downloading validation script..."
+        curl -s https://raw.githubusercontent.com/ytzcom/geoip/main/scripts/validate-geoip-action.py > /tmp/validate-geoip.py
+        chmod +x /tmp/validate-geoip.py
+
+    - name: Validate databases
+      if: inputs.validate == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
+      shell: bash
+      run: |
+        echo "🔍 Validating GeoIP databases..."
+        
+        # Run validation
+        if python /tmp/validate-geoip.py "${{ inputs.path }}" --databases "${{ steps.download.outputs.databases }}"; then
+          echo "✅ All databases validated successfully"
+        else
+          echo "❌ Validation failed"
+          if [ "${{ inputs.fail-on-error }}" = "true" ]; then
+            exit 1
+          fi
+        fi
+
+    - name: Save to cache
+      if: steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ env.CACHE_KEY }}
+        enableCrossOsArchive: true
+
+    - name: Cleanup temporary files
+      if: always()
+      shell: bash
+      run: |
+        echo "🧹 Cleaning up temporary files..."
+        # Clean up temporary files created during the action
+        rm -f /tmp/download-urls.json 2>/dev/null || true
+        rm -f /tmp/download_results_*.txt 2>/dev/null || true
+        rm -f /tmp/validate-geoip.py 2>/dev/null || true
+        echo "✅ Cleanup completed"
+
+    - name: Summary
+      if: always()
+      shell: bash
+      run: |
+        echo "## 🌍 GeoIP Database Cache Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cache Key**: ${{ env.CACHE_KEY }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cache Hit**: ${{ steps.cache.outputs.cache-hit || 'false' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Path**: ${{ inputs.path }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Databases**: ${{ steps.download.outputs.databases || steps.cache-list.outputs.databases || 'None' }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+          echo "- **Status**: ✅ Using cached databases" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ steps.download.outcome }}" = "success" ]; then
+          echo "- **Status**: ✅ Downloaded and cached databases" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Status**: ❌ Failed to download databases" >> $GITHUB_STEP_SUMMARY
+        fi
