@@ -1,0 +1,20 @@
+# GeoIP Update Service Configuration
+# Copy to /etc/geoip-update/config and update with your values
+
+# API Configuration (required)
+GEOIP_API_KEY=your_api_key_here
+GEOIP_API_ENDPOINT=https://your-api.execute-api.region.amazonaws.com/v1/auth
+
+# Target directory for database files
+GEOIP_TARGET_DIR=/var/lib/geoip
+
+# Log file location
+GEOIP_LOG_FILE=/var/log/geoip/update.log
+
+# Specific databases to download (comma-separated)
+# Leave commented for all databases
+#GEOIP_DATABASES=GeoIP2-City.mmdb,GeoIP2-Country.mmdb
+
+# Advanced settings
+#GEOIP_MAX_RETRIES=3
+#GEOIP_TIMEOUT=300

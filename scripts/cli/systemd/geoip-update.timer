@@ -1,0 +1,25 @@
+[Unit]
+Description=GeoIP Database Update Timer
+Documentation=https://github.com/yourusername/geoip-updater
+Requires=geoip-update.service
+
+[Timer]
+# Run daily at 2 AM local time
+OnCalendar=daily
+OnCalendar=*-*-* 02:00:00
+
+# Run on boot if missed
+Persistent=true
+
+# Random delay to avoid thundering herd
+RandomizedDelaySec=1800
+
+# If the system was powered down when the timer was supposed to run,
+# run it when the system is next started
+OnBootSec=15min
+
+# Accuracy of the timer (default is 1min)
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target
