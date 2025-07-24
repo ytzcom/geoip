@@ -9,6 +9,7 @@ ARG TARGETARCH
 ARG SUPERCRONIC_VERSION=0.2.29
 
 # Download supercronic (a cron replacement that runs as non-root)
+# TODO: Add SHA verification when supercronic provides proper checksum files
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -16,11 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ARCH=${TARGETARCH:-amd64} \
     && echo "Downloading supercronic for architecture: ${ARCH}" \
     && curl -fsSLO "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH}" \
-    && curl -fsSLO "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH}.sha1sum" \
-    && sha1sum -c "supercronic-linux-${ARCH}.sha1sum" \
     && chmod +x "supercronic-linux-${ARCH}" \
-    && mv "supercronic-linux-${ARCH}" /usr/local/bin/supercronic \
-    && rm "supercronic-linux-${ARCH}.sha1sum"
+    && mv "supercronic-linux-${ARCH}" /usr/local/bin/supercronic
 
 # Install Python dependencies
 WORKDIR /build
