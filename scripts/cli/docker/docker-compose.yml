@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  geoip-updater:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: geoip-updater:latest
+    container_name: geoip-updater
+    
+    # Environment variables
+    environment:
+      # API Configuration (override with .env file)
+      GEOIP_API_KEY: ${GEOIP_API_KEY}
+      GEOIP_API_ENDPOINT: ${GEOIP_API_ENDPOINT:-https://your-api.execute-api.region.amazonaws.com/v1/auth}
+      
+      # Download settings
+      GEOIP_TARGET_DIR: /data
+      GEOIP_LOG_FILE: /logs/geoip-update.log
+      
+      # Python settings
+      PYTHONUNBUFFERED: 1
+    
+    # Volumes for persistence
+    volumes:
+      # GeoIP databases
+      - geoip-data:/data
+      
+      # Logs
+      - geoip-logs:/logs
+      
+      # Config file (optional)
+      - ./config.yaml:/app/config.yaml:ro
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Command (download all databases)
+    command: ["--quiet", "--log-file", "/logs/geoip-update.log"]
+
+  # Cron service for scheduled updates
+  geoip-cron:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cron
+    image: geoip-updater-cron:latest
+    container_name: geoip-updater-cron
+    
+    environment:
+      GEOIP_API_KEY: ${GEOIP_API_KEY}
+      GEOIP_API_ENDPOINT: ${GEOIP_API_ENDPOINT:-https://your-api.execute-api.region.amazonaws.com/v1/auth}
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-0 2 * * *}
+    
+    volumes:
+      - geoip-data:/data
+      - geoip-logs:/logs
+      - ./config.yaml:/app/config.yaml:ro
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    
+    restart: unless-stopped
+    
+    depends_on:
+      - geoip-updater
+
+volumes:
+  geoip-data:
+    driver: local
+  geoip-logs:
+    driver: local
+
+networks:
+  default:
+    name: geoip-network

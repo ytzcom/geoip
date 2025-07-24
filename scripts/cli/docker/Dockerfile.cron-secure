@@ -1,0 +1,60 @@
+# Secure cron container using supercronic for non-root execution
+FROM python:3.11-slim as builder
+
+# Download supercronic (a cron replacement that runs as non-root)
+ARG SUPERCRONIC_VERSION=0.2.29
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && SUPERCRONIC_SHA1SUM=$(curl -s https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}.sha1sum | awk '{print $1}') \
+    && curl -fsSLO https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH} \
+    && echo "${SUPERCRONIC_SHA1SUM}  supercronic-linux-${TARGETARCH}" | sha1sum -c - \
+    && chmod +x supercronic-linux-${TARGETARCH} \
+    && mv supercronic-linux-${TARGETARCH} /usr/local/bin/supercronic
+
+# Install Python dependencies
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# Runtime stage
+FROM python:3.11-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 -s /bin/bash geoip
+
+# Copy supercronic from builder
+COPY --from=builder /usr/local/bin/supercronic /usr/local/bin/supercronic
+
+# Copy Python dependencies from builder
+COPY --from=builder /root/.local /home/geoip/.local
+
+# Copy application
+WORKDIR /app
+COPY geoip-update.py .
+
+# Copy secure entrypoint script
+COPY docker/entrypoint-cron-secure.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create directories with proper ownership
+RUN mkdir -p /data /logs \
+    && chown -R geoip:geoip /data /logs /app
+
+# Switch to non-root user
+USER geoip
+
+# Add local bin to PATH
+ENV PATH=/home/geoip/.local/bin:$PATH
+
+# Set environment
+ENV GEOIP_TARGET_DIR=/data \
+    PYTHONUNBUFFERED=1
+
+# Entrypoint
+ENTRYPOINT ["/entrypoint.sh"]

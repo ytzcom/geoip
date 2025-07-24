@@ -1,0 +1,151 @@
+version: '3.8'
+
+services:
+  geoip-updater:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: geoip-updater:latest
+    container_name: geoip-updater
+    
+    # Environment variables
+    environment:
+      # API Configuration (override with .env file)
+      GEOIP_API_KEY: ${GEOIP_API_KEY}
+      GEOIP_API_ENDPOINT: ${GEOIP_API_ENDPOINT:-https://your-api.execute-api.region.amazonaws.com/v1/auth}
+      
+      # Download settings
+      GEOIP_TARGET_DIR: /data
+      GEOIP_LOG_FILE: /logs/geoip-update.log
+      
+      # Python settings
+      PYTHONUNBUFFERED: 1
+    
+    # Volumes for persistence
+    volumes:
+      # GeoIP databases
+      - geoip-data:/data
+      
+      # Logs
+      - geoip-logs:/logs
+      
+      # Config file (optional)
+      - ./config.yaml:/app/config.yaml:ro
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    
+    # Network isolation
+    networks:
+      - geoip-internal
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "geoip-update.py", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Command (download all databases)
+    command: ["--quiet", "--log-file", "/logs/geoip-update.log"]
+
+  # Secure cron service for scheduled updates
+  geoip-cron:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cron-secure
+    image: geoip-updater-cron:latest
+    container_name: geoip-updater-cron
+    
+    # User runs as non-root (uid 1000)
+    user: "1000:1000"
+    
+    environment:
+      # API credentials passed as environment variables only
+      # Never written to disk
+      GEOIP_API_KEY: ${GEOIP_API_KEY}
+      GEOIP_API_ENDPOINT: ${GEOIP_API_ENDPOINT:-https://your-api.execute-api.region.amazonaws.com/v1/auth}
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-0 2 * * *}
+      GEOIP_TARGET_DIR: /data
+    
+    volumes:
+      - geoip-data:/data
+      - geoip-logs:/logs
+      - ./config.yaml:/app/config.yaml:ro
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    
+    # Network isolation
+    networks:
+      - geoip-internal
+    
+    # Expose Prometheus metrics from supercronic
+    ports:
+      - "127.0.0.1:9090:9090"
+    
+    # Health check via Prometheus endpoint
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    restart: unless-stopped
+    
+    depends_on:
+      geoip-updater:
+        condition: service_healthy
+
+volumes:
+  geoip-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data
+  
+  geoip-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/logs
+
+networks:
+  geoip-internal:
+    driver: bridge
+    internal: true  # No external network access except through explicit rules
