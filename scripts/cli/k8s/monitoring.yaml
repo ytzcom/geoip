@@ -1,0 +1,109 @@
+# Optional: Job for exposing metrics about database freshness
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: geoip-metrics-exporter
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-metrics
+    app.kubernetes.io/component: exporter
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: metrics-exporter
+        image: busybox:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # Create a simple metrics file
+            cat > /data/metrics.prom << EOF
+            # HELP geoip_database_updated_timestamp Last update timestamp
+            # TYPE geoip_database_updated_timestamp gauge
+            EOF
+            
+            # Add metrics for each database
+            for db in /data/*.mmdb /data/*.BIN; do
+              if [ -f "$db" ]; then
+                basename=$(basename "$db")
+                timestamp=$(stat -c %Y "$db" 2>/dev/null || stat -f %m "$db" 2>/dev/null || echo 0)
+                echo "geoip_database_updated_timestamp{database=\"$basename\"} $timestamp" >> /data/metrics.prom
+              fi
+            done
+            
+            echo "Metrics exported to /data/metrics.prom"
+        volumeMounts:
+        - name: geoip-data
+          mountPath: /data
+      volumes:
+      - name: geoip-data
+        persistentVolumeClaim:
+          claimName: geoip-data
+---
+# ConfigMap for Prometheus alerts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: geoip-alerts
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: monitoring
+    prometheus: kube-prometheus
+data:
+  alerts.yaml: |
+    groups:
+    - name: geoip.rules
+      interval: 5m
+      rules:
+      # Alert if CronJob hasn't run successfully in 48 hours
+      - alert: GeoIPUpdateFailed
+        expr: |
+          time() - kube_cronjob_status_last_successful_time{
+            namespace="geoip-system",
+            cronjob="geoip-updater"
+          } > 172800
+        for: 1h
+        labels:
+          severity: warning
+          service: geoip
+        annotations:
+          summary: "GeoIP database update has not succeeded in 48 hours"
+          description: "CronJob {{ $labels.cronjob }} in namespace {{ $labels.namespace }} hasn't completed successfully in over 48 hours."
+      
+      # Alert if too many failed jobs
+      - alert: GeoIPUpdateFailureRate
+        expr: |
+          rate(kube_job_status_failed{
+            namespace="geoip-system",
+            job_name=~"geoip-updater-.*"
+          }[1h]) > 0.5
+        for: 30m
+        labels:
+          severity: critical
+          service: geoip
+        annotations:
+          summary: "High GeoIP update failure rate"
+          description: "More than 50% of GeoIP update jobs are failing."
+      
+      # Alert if PVC is running out of space
+      - alert: GeoIPStorageSpaceLow
+        expr: |
+          (
+            kubelet_volume_stats_available_bytes{
+              namespace="geoip-system",
+              persistentvolumeclaim="geoip-data"
+            } / 
+            kubelet_volume_stats_capacity_bytes{
+              namespace="geoip-system",
+              persistentvolumeclaim="geoip-data"
+            }
+          ) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: geoip
+        annotations:
+          summary: "GeoIP storage space is low"
+          description: "Less than 10% storage space remaining on GeoIP PVC."

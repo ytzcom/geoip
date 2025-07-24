@@ -1,0 +1,239 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: geoip-updater
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: cronjob
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  # Schedule: Daily at 2 AM UTC
+  schedule: "0 2 * * *"
+  
+  # Job configuration
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: geoip-updater
+        app.kubernetes.io/component: job
+    spec:
+      # Retry policy
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800  # 30 minutes max
+      
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: geoip-updater
+            app.kubernetes.io/component: pod
+          annotations:
+            # Prometheus annotations
+            prometheus.io/scrape: "false"
+        spec:
+          # Security context for pod
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          
+          # Service account (create separately if needed)
+          # serviceAccountName: geoip-updater
+          
+          # Node selection
+          # nodeSelector:
+          #   workload-type: batch
+          
+          # Tolerations for dedicated nodes
+          # tolerations:
+          # - key: "batch"
+          #   operator: "Equal"
+          #   value: "true"
+          #   effect: "NoSchedule"
+          
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: geoip-updater
+            # Use the appropriate image based on your preference
+            # Option 1: Official Python image
+            image: python:3.11-slim
+            # Option 2: Pre-built Docker image
+            # image: your-registry/geoip-updater:latest
+            
+            command: ["/bin/sh", "-c"]
+            args:
+              - |
+                set -e
+                echo "Starting GeoIP update..."
+                
+                # Install dependencies (for Python image)
+                pip install --no-cache-dir aiohttp pyyaml click
+                
+                # Run update script
+                python /scripts/geoip-update.py \
+                  --quiet \
+                  --log-file /logs/geoip-update.log \
+                  --directory /data
+                
+                echo "Update completed successfully"
+            
+            # Environment variables from ConfigMap and Secret
+            env:
+            - name: GEOIP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-key
+            - name: GEOIP_API_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-endpoint
+            - name: GEOIP_TARGET_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: geoip-config
+                  key: target-dir
+            - name: GEOIP_LOG_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: geoip-config
+                  key: log-file
+            
+            # Resource limits
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+            
+            # Security context for container
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            
+            # Volume mounts
+            volumeMounts:
+            - name: geoip-data
+              mountPath: /data
+            - name: geoip-logs
+              mountPath: /logs
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            
+          # Volumes
+          volumes:
+          - name: geoip-data
+            persistentVolumeClaim:
+              claimName: geoip-data
+          - name: geoip-logs
+            persistentVolumeClaim:
+              claimName: geoip-logs
+          - name: scripts
+            configMap:
+              name: geoip-scripts
+              defaultMode: 0755
+          - name: config
+            configMap:
+              name: geoip-config
+          - name: tmp
+            emptyDir: {}
+---
+# Alternative: Use pre-built image
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: geoip-updater-go
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater-go
+    app.kubernetes.io/component: cronjob
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          
+          restartPolicy: OnFailure
+          
+          containers:
+          - name: geoip-updater
+            # Pre-built Go binary in scratch image
+            image: your-registry/geoip-updater-go:latest
+            
+            args:
+              - "-quiet"
+              - "-log-file"
+              - "/logs/geoip-update.log"
+              - "-directory"
+              - "/data"
+            
+            env:
+            - name: GEOIP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-key
+            - name: GEOIP_API_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-endpoint
+            
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: 200m
+                memory: 256Mi
+            
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            
+            volumeMounts:
+            - name: geoip-data
+              mountPath: /data
+            - name: geoip-logs
+              mountPath: /logs
+            - name: tmp
+              mountPath: /tmp
+          
+          volumes:
+          - name: geoip-data
+            persistentVolumeClaim:
+              claimName: geoip-data
+          - name: geoip-logs
+            persistentVolumeClaim:
+              claimName: geoip-logs
+          - name: tmp
+            emptyDir: {}

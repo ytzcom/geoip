@@ -1,0 +1,257 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: geoip-updater
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: cronjob
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  # Schedule: Daily at 2 AM UTC
+  schedule: "0 2 * * *"
+  
+  # Job configuration
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: geoip-updater
+        app.kubernetes.io/component: job
+        # Add version label for pod deletion during updates
+        version: "{{ .Chart.Version | default "1.0.0" }}"
+    spec:
+      # Retry policy
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800  # 30 minutes max
+      ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+      
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: geoip-updater
+            app.kubernetes.io/component: pod
+            sidecar.istio.io/inject: "false"  # Disable service mesh injection
+          annotations:
+            # Disable service mesh injection
+            linkerd.io/inject: disabled
+            kuma.io/sidecar-injection: disabled
+            # Security annotations
+            container.apparmor.security.beta.kubernetes.io/geoip-updater: runtime/default
+            seccomp.security.alpha.kubernetes.io/pod: runtime/default
+        spec:
+          # Security context for pod
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 0  # Use root group for OpenShift compatibility
+            fsGroup: 0
+            seccompProfile:
+              type: RuntimeDefault
+          
+          # Service account with minimal permissions
+          serviceAccountName: geoip-updater
+          automountServiceAccountToken: false
+          
+          # DNS policy for external access
+          dnsPolicy: ClusterFirst
+          
+          # Priority class for batch workloads
+          priorityClassName: batch-medium-priority
+          
+          restartPolicy: OnFailure
+          
+          # Init container to validate environment
+          initContainers:
+          - name: validate-env
+            image: busybox:stable
+            command: ['sh', '-c']
+            args:
+              - |
+                echo "Validating environment..."
+                if [ -z "$GEOIP_API_KEY" ]; then
+                  echo "ERROR: GEOIP_API_KEY not set"
+                  exit 1
+                fi
+                if [ -z "$GEOIP_API_ENDPOINT" ]; then
+                  echo "ERROR: GEOIP_API_ENDPOINT not set"
+                  exit 1
+                fi
+                echo "Environment validation successful"
+            env:
+            - name: GEOIP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-key
+            - name: GEOIP_API_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-endpoint
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              runAsUser: 1000
+              capabilities:
+                drop:
+                - ALL
+          
+          containers:
+          - name: geoip-updater
+            # Use pre-built image with all dependencies
+            image: your-registry/geoip-updater:latest
+            imagePullPolicy: IfNotPresent
+            
+            # Command arguments
+            args:
+              - "--quiet"
+              - "--log-file"
+              - "/logs/geoip-update.log"
+              - "--directory"
+              - "/data"
+              - "--parallel"
+              - "3"
+              - "--retry"
+              - "3"
+            
+            # Environment variables from ConfigMap and Secret
+            env:
+            - name: GEOIP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-key
+                  optional: false
+            - name: GEOIP_API_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: geoip-api-credentials
+                  key: api-endpoint
+                  optional: false
+            - name: GEOIP_TARGET_DIR
+              value: "/data"
+            - name: GEOIP_LOG_FILE
+              value: "/logs/geoip-update.log"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TZ
+              value: "UTC"
+            
+            # Resource limits and requests
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+                ephemeral-storage: 100Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+                ephemeral-storage: 1Gi
+            
+            # Liveness and readiness probes
+            livenessProbe:
+              exec:
+                command:
+                  - python
+                  - -c
+                  - "import sys; sys.exit(0)"
+              initialDelaySeconds: 5
+              periodSeconds: 30
+              timeoutSeconds: 5
+            
+            # Security context for container
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              runAsUser: 1000
+              capabilities:
+                drop:
+                - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            
+            # Volume mounts
+            volumeMounts:
+            - name: geoip-data
+              mountPath: /data
+            - name: geoip-logs
+              mountPath: /logs
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/geoip/.cache
+          
+          # Volumes
+          volumes:
+          - name: geoip-data
+            persistentVolumeClaim:
+              claimName: geoip-data
+          - name: geoip-logs
+            persistentVolumeClaim:
+              claimName: geoip-logs
+          - name: tmp
+            emptyDir:
+              sizeLimit: 1Gi
+          - name: cache
+            emptyDir:
+              sizeLimit: 500Mi
+
+---
+# Build instructions ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: geoip-build-instructions
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: documentation
+data:
+  README.md: |
+    # Building the GeoIP Updater Image for Kubernetes
+    
+    ## Prerequisites
+    - Docker or Podman
+    - Access to a container registry
+    
+    ## Build Instructions
+    
+    1. Build the image:
+    ```bash
+    cd scripts/cli
+    docker build -f k8s/Dockerfile -t your-registry/geoip-updater:latest .
+    ```
+    
+    2. Push to registry:
+    ```bash
+    docker push your-registry/geoip-updater:latest
+    ```
+    
+    3. Update the CronJob manifest with your image:
+    ```yaml
+    image: your-registry/geoip-updater:latest
+    ```
+    
+    ## Using Different Base Images
+    
+    ### Option 1: Python Slim (Recommended)
+    - Smaller size (~150MB)
+    - Includes all Python dependencies
+    - Good balance of size and functionality
+    
+    ### Option 2: Distroless Python
+    - Even smaller (~100MB)
+    - More secure (no shell)
+    - Requires careful dependency management
+    
+    ### Option 3: Alpine Linux
+    - Smallest size (~50MB)
+    - May have compatibility issues with some Python packages
+    - Requires additional testing

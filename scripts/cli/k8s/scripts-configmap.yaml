@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: geoip-scripts
+  namespace: geoip-system
+  labels:
+    app.kubernetes.io/name: geoip-updater
+    app.kubernetes.io/component: scripts
+data:
+  # Include the Python script inline
+  # In production, consider building this into the Docker image
+  geoip-update.py: |
+    #!/usr/bin/env python3
+    # Note: This is a placeholder. In production, include the full script
+    # or better yet, build it into your Docker image
+    import os
+    print("This is a placeholder script.")
+    print("In production, either:")
+    print("1. Include the full geoip-update.py script here")
+    print("2. Build the script into your Docker image")
+    print("3. Mount the script from a Git repository")
+    
+  # Wrapper script for additional setup if needed
+  entrypoint.sh: |
+    #!/bin/sh
+    set -e
+    
+    echo "GeoIP Update Starting..."
+    echo "Time: $(date)"
+    echo "API Endpoint: ${GEOIP_API_ENDPOINT}"
+    echo "Target Directory: ${GEOIP_TARGET_DIR}"
+    
+    # Run the update
+    exec python /scripts/geoip-update.py "$@"

@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: geoip-dev
+
+# Base resources
+resources:
+  - ../../
+
+# Namespace override
+namePrefix: dev-
+
+# Common labels for dev
+commonLabels:
+  environment: development
+
+# Dev-specific patches
+patches:
+  # More frequent updates in dev
+  - target:
+      kind: CronJob
+      name: geoip-updater
+    patch: |-
+      - op: replace
+        path: /spec/schedule
+        value: "*/30 * * * *"  # Every 30 minutes for testing
+  
+  # Lower resource limits in dev
+  - target:
+      kind: CronJob
+      name: geoip-updater
+    patch: |-
+      - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+  
+  # Smaller storage in dev
+  - target:
+      kind: PersistentVolumeClaim
+      name: geoip-data
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 100Mi
+
+# Dev secrets (use sealed-secrets in production)
+secretGenerator:
+  - name: geoip-api-credentials
+    behavior: replace
+    literals:
+      - api-key=dev_api_key_here
+      - api-endpoint=https://dev-api.execute-api.region.amazonaws.com/v1/auth
