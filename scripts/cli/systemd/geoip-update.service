@@ -1,0 +1,59 @@
+[Unit]
+Description=GeoIP Database Update Service
+Documentation=https://github.com/yourusername/geoip-updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=geoip
+Group=geoip
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/geoip /var/log/geoip
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+PrivateMounts=true
+
+# Resource limits
+CPUQuota=50%
+MemoryLimit=512M
+TasksMax=16
+
+# Environment
+Environment="GEOIP_TARGET_DIR=/var/lib/geoip"
+EnvironmentFile=-/etc/geoip-update/config
+
+# Use the appropriate script based on your preference
+# Option 1: Bash script
+ExecStart=/usr/local/bin/geoip-update.sh -q -l /var/log/geoip/update.log
+
+# Option 2: Python script
+#ExecStart=/usr/local/bin/python3 /usr/local/bin/geoip-update.py --quiet --log-file /var/log/geoip/update.log
+
+# Option 3: Go binary
+#ExecStart=/usr/local/bin/geoip-update -quiet -log-file /var/log/geoip/update.log
+
+# Restart policy
+Restart=on-failure
+RestartSec=300
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geoip-update
+
+[Install]
+WantedBy=multi-user.target
