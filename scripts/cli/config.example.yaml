@@ -1,0 +1,27 @@
+# GeoIP Update Configuration Example
+# Copy this to config.yaml and customize for your environment
+
+# API Configuration
+api_key: "your_api_key_here"  # Or use GEOIP_API_KEY environment variable
+api_endpoint: "https://api.example.com/v1/auth"  # Replace with actual endpoint
+
+# Download Configuration
+target_dir: "/var/lib/geoip"  # Where to store databases
+databases:  # List specific databases or use "all"
+  - all
+  # Or specify individual databases:
+  # - GeoIP2-City.mmdb
+  # - GeoIP2-Country.mmdb
+  # - GeoIP2-ISP.mmdb
+
+# Network Configuration
+max_retries: 3
+timeout: 300  # seconds
+max_concurrent: 4  # parallel downloads
+verify_ssl: true
+
+# Logging
+# log_file: /var/log/geoip-update.log  # Uncomment to enable file logging
+
+# Advanced Options
+user_agent: "GeoIP-Update-Python/1.0"
