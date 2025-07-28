@@ -114,6 +114,77 @@ print(f"Proxy Type: {result.proxy_type}")
 print(f"Country: {result.country_long}")
 ```
 
+### PHP (with GeoIP2)
+
+```php
+<?php
+require_once 'vendor/autoload.php';
+use GeoIp2\Database\Reader;
+
+// Load the database
+$reader = new Reader('GeoIP2-City.mmdb');
+
+// Lookup an IP
+$record = $reader->city('8.8.8.8');
+echo "Country: " . $record->country->name . "\n";
+echo "City: " . $record->city->name . "\n";
+echo "Latitude: " . $record->location->latitude . "\n";
+echo "Longitude: " . $record->location->longitude . "\n";
+
+// Close the reader (not required, but recommended)
+$reader->close();
+?>
+```
+
+### PHP (with IP2Location)
+
+```php
+<?php
+require_once 'vendor/autoload.php';
+use IP2Location\Database;
+
+// Load the database
+$db = new Database('IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN', IP2Location\Database::FILE_IO);
+
+// Lookup an IP
+$records = $db->lookup('8.8.8.8', IP2Location\Database::ALL);
+echo "Country: " . $records['countryLong'] . "\n";
+echo "City: " . $records['city'] . "\n";
+echo "ISP: " . $records['isp'] . "\n";
+?>
+```
+
+### Laravel (with GeoIP)
+
+```php
+<?php
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Torann\GeoIP\Facades\GeoIP;
+
+class LocationController extends Controller
+{
+    public function getLocation(Request $request)
+    {
+        // Get client IP or use a specific IP
+        $ip = $request->ip() ?? '8.8.8.8';
+        
+        // Get location data
+        $location = GeoIP::getLocation($ip);
+        
+        return response()->json([
+            'country' => $location['country'],
+            'city' => $location['city'],
+            'latitude' => $location['lat'],
+            'longitude' => $location['lon'],
+            'timezone' => $location['timezone']
+        ]);
+    }
+}
+?>
+```
+
 ## 🛠️ Integration
 
 ### CDN/CloudFront Integration
