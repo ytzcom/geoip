@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2025--07--23%2014:50:33%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2025--07--28%2000:28:14%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-7-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-3-purple)
@@ -13,19 +13,6 @@ Automated GeoIP database updater for MaxMind and IP2Location databases. This rep
 Databases are automatically updated **every Monday at midnight UTC**.
 
 ## 🚀 Quick Start
-
-### Use as GitHub Action
-
-The easiest way to use GeoIP databases in your GitHub workflows:
-
-```yaml
-- name: Setup GeoIP databases
-  uses: ytzcom/geoip@v1
-  with:
-    api-key: ${{ secrets.GEOIP_API_KEY }}
-```
-
-This action automatically downloads and caches the databases for you. See the [Action Setup Guide](docs/action-setup.md) for detailed configuration options.
 
 ### Direct Download Links
 
@@ -75,7 +62,7 @@ Compressed archives are also available:
 | GeoIP2-Connection-Type | MaxMind | MMDB | 11MB | Connection type data |
 | DB23 IPv4 | IP2Location | BIN | 633MB | Comprehensive IPv4 geolocation data |
 | DB23 IPv6 | IP2Location | BIN | 805MB | Comprehensive IPv6 geolocation data |
-| PX2 IPv4 | IP2Location | BIN | 193MB | IPv4 proxy detection data |
+| PX2 IPv4 | IP2Location | BIN | 192MB | IPv4 proxy detection data |
 
 ## 🔧 Usage Examples
 
@@ -192,18 +179,8 @@ pip install geoip2 IP2Location IP2Proxy
 ## 🔐 Security
 
 - All databases are validated before upload to ensure integrity
-- GitHub Action requires API key authentication for controlled access
-- Pre-signed URLs expire after 1 hour for secure downloads
+- S3 bucket has public read access for easy distribution
 - Original database licenses apply - ensure compliance with MaxMind and IP2Location terms
-
-### API Key Access
-
-For automated access via GitHub Action:
-1. Request an API key by opening an issue
-2. Store it as a GitHub secret named `GEOIP_API_KEY`
-3. Use the action as shown in the Quick Start section
-
-Direct S3 downloads remain available for manual/one-time use.
 
 ## 🤝 Contributing
 
@@ -227,4 +204,4 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 
 ---
 
-**Last Update:** 2025-07-23 14:50:33 UTC
+**Last Update:** 2025-07-28 00:28:14 UTC
