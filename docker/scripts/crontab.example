@@ -1,0 +1,17 @@
+# Example crontab for GeoIP database updates
+# This file shows various scheduling options
+
+# Update daily at 2 AM (default)
+0 2 * * * /opt/geoip/geoip-update.sh --api-key $GEOIP_API_KEY --directory /app/resources/geoip --quiet
+
+# Update weekly on Sunday at 3 AM
+# 0 3 * * 0 /opt/geoip/geoip-update.sh --api-key $GEOIP_API_KEY --directory /app/resources/geoip --quiet
+
+# Update monthly on the 1st at 4 AM
+# 0 4 1 * * /opt/geoip/geoip-update.sh --api-key $GEOIP_API_KEY --directory /app/resources/geoip --quiet
+
+# Update every 6 hours
+# 0 */6 * * * /opt/geoip/geoip-update.sh --api-key $GEOIP_API_KEY --directory /app/resources/geoip --quiet
+
+# Update specific databases only
+# 0 2 * * * /opt/geoip/geoip-update.sh --api-key $GEOIP_API_KEY --directory /app/resources/geoip --databases "GeoIP2-City.mmdb,GeoIP2-Country.mmdb" --quiet
