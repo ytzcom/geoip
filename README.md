@@ -247,10 +247,36 @@ Install Python libraries:
 pip install geoip2 IP2Location IP2Proxy
 ```
 
+## 🛠️ CLI Tools
+
+For automated downloading with authentication, use the included CLI tools:
+
+```bash
+# Install CLI script
+cd scripts/cli
+
+# Download with API key
+./geoip-update.sh -k YOUR_API_KEY
+
+# Or use Docker
+docker run --rm \
+  -e GEOIP_API_KEY=your-api-key \
+  -v $(pwd)/data:/data \
+  ytzcom/geoip-updater:latest
+```
+
+**Available Scripts:**
+- **Bash** (`geoip-update.sh`) - Linux, macOS, BSD
+- **PowerShell** (`geoip-update.ps1`) - Windows
+- **Python** (`geoip-update.py`) - Cross-platform
+- **Go** (`main.go`) - Compiled binary
+
+See [CLI Documentation](scripts/cli/README.md) for detailed usage instructions.
+
 ## 🔐 Security
 
 - All databases are validated before upload to ensure integrity
-- S3 bucket has public read access for easy distribution
+- CLI tools use API key authentication for secure access
 - Original database licenses apply - ensure compliance with MaxMind and IP2Location terms
 
 ## 🤝 Contributing

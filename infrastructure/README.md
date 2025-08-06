@@ -9,6 +9,7 @@ This authentication system provides secure access to GeoIP databases with minima
 - **Clean, maintainable code** (~50 lines)
 - **Single Terraform configuration**
 - **One-command deployment**
+- **Custom domain support** via CloudFront (geoip.ytrack.io)
 - **Perfect for internal projects**
 
 ## 🚀 Quick Start
@@ -84,13 +85,14 @@ aws lambda update-function-configuration \
 
 ### Request Flow
 ```
-Client Request → API Gateway → Lambda → Validate Key → Generate S3 URLs
-                                 ↑
-                          Environment Variables
-                           (API Keys stored here)
+Client Request → CloudFront (geoip.ytrack.io) → API Gateway → Lambda → Validate Key → Generate S3 URLs
+                                                                ↑
+                                                         Environment Variables
+                                                          (API Keys stored here)
 ```
 
 ### Components
+- **CloudFront**: Custom domain distribution (geoip.ytrack.io)
 - **Lambda Function**: Simple Python function (50 lines)
 - **API Gateway**: HTTP API with CORS
 - **S3 Bucket**: Your existing GeoIP files
@@ -102,7 +104,8 @@ Client Request → API Gateway → Lambda → Validate Key → Generate S3 URLs
 |-----------|-------------|
 | Lambda | ~$0.20/month |
 | API Gateway | ~$3.50/month |
-| **Total** | **~$3.70/month** |
+| CloudFront | ~$0.50/month |
+| **Total** | **~$4.20/month** |
 
 *Minimal infrastructure with no database costs*
 
@@ -127,11 +130,34 @@ aws_region = "us-east-1"       # Optional, defaults to us-east-1
   - `S3_BUCKET`: Bucket containing GeoIP files
   - `URL_EXPIRY_SECONDS`: Pre-signed URL expiry (default: 3600)
 
+## 🌐 Custom Domain Setup
+
+### CloudFront Configuration
+The API is accessible via CloudFront at `https://geoip.ytrack.io/auth`.
+
+After deployment, configure DNS in Cloudflare:
+
+1. **Get CloudFront domain from Terraform output:**
+   ```bash
+   cd terraform
+   terraform output cloudfront_domain_name
+   ```
+
+2. **Add CNAME record in Cloudflare:**
+   - **Type**: CNAME
+   - **Name**: geoip
+   - **Target**: [CloudFront domain from output]
+   - **Proxy**: DNS only (gray cloud) ⚠️ **IMPORTANT**
+
+   The proxy MUST be disabled for CloudFront to handle SSL termination.
+
+3. **Wait for propagation** (15-20 minutes for initial deployment)
+
 ## 📝 API Usage
 
 ### Request
 ```bash
-curl -X POST https://your-api-gateway-url/auth \
+curl -X POST https://geoip.ytrack.io/auth \
   -H 'X-API-Key: your-api-key' \
   -H 'Content-Type: application/json' \
   -d '{"databases": "all"}'
