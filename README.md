@@ -14,7 +14,32 @@ Databases are automatically updated **every Monday at midnight UTC**.
 
 ## 🚀 Quick Start
 
-### Docker (Recommended)
+### Docker Integration (2 Lines!)
+
+For ANY Docker project, add these 2 lines to your Dockerfile:
+
+```dockerfile
+# Copy GeoIP scripts
+FROM ytzcom/geoip-scripts:latest as geoip
+COPY --from=geoip /opt/geoip /opt/geoip
+```
+
+Then in your entrypoint:
+```sh
+. /opt/geoip/entrypoint-helper.sh && geoip_init
+```
+
+### One-Line Linux Installer
+
+```bash
+# Install GeoIP tools to /opt/geoip
+curl -sSL https://geoip.ytrack.io/install | sh
+
+# With automatic updates via cron
+curl -sSL "https://geoip.ytrack.io/install?with_cron=true" | sh
+```
+
+### Docker CLI (Direct Download)
 
 ```bash
 # One-time download with Docker
@@ -267,6 +292,149 @@ services:
 volumes:
   geoip-data:
   geoip-logs:
+```
+
+## 🔄 Integration Guide
+
+### Docker Projects
+
+The easiest way to integrate GeoIP databases into your Docker project:
+
+```dockerfile
+# In your Dockerfile - just 2 lines!
+FROM ytzcom/geoip-scripts:latest as geoip
+COPY --from=geoip /opt/geoip /opt/geoip
+
+# Your base image
+FROM your-base-image
+
+# Copy the scripts
+COPY --from=geoip /opt/geoip /opt/geoip
+
+# Configure environment
+ENV GEOIP_API_KEY=your-api-key \
+    GEOIP_TARGET_DIR=/app/geoip \
+    GEOIP_DOWNLOAD_ON_START=true \
+    GEOIP_SETUP_CRON=true
+
+# In your entrypoint
+ENTRYPOINT ["/bin/sh", "-c", ". /opt/geoip/entrypoint-helper.sh && geoip_init && exec your-app"]
+```
+
+### Available Functions
+
+When you source `entrypoint-helper.sh`, you get:
+- `geoip_init` - Complete initialization (download, validate, setup cron)
+- `geoip_check_databases` - Check if databases exist
+- `geoip_download_databases` - Download databases
+- `geoip_validate_databases` - Validate databases
+- `geoip_health_check` - Health check for monitoring
+
+### Example: Laravel/PHP Application
+
+```dockerfile
+FROM ytzcom/geoip-scripts:latest as geoip
+FROM php:8.3-fpm
+
+# Copy GeoIP scripts
+COPY --from=geoip /opt/geoip /opt/geoip
+
+# Your app code
+COPY . /var/www/html
+
+# Configure GeoIP
+ENV GEOIP_API_KEY=${GEOIP_API_KEY} \
+    GEOIP_TARGET_DIR=/var/www/html/resources/geoip \
+    GEOIP_DOWNLOAD_ON_START=true
+
+# Entrypoint that initializes GeoIP
+RUN echo '#!/bin/sh\n\
+. /opt/geoip/entrypoint-helper.sh\n\
+geoip_init\n\
+exec php-fpm' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+```
+
+### Example: Node.js Application
+
+```dockerfile
+FROM ytzcom/geoip-scripts:latest as geoip
+FROM node:20-alpine
+
+# Copy GeoIP scripts
+COPY --from=geoip /opt/geoip /opt/geoip
+
+# Your app
+WORKDIR /app
+COPY . .
+RUN npm ci --production
+
+# Configure
+ENV GEOIP_API_KEY=${GEOIP_API_KEY} \
+    GEOIP_TARGET_DIR=/app/data/geoip
+
+# Initialize and start
+CMD sh -c '. /opt/geoip/entrypoint-helper.sh && geoip_init && node server.js'
+```
+
+### Linux Systems
+
+One-line installation for any Linux system:
+
+```bash
+# Basic installation
+curl -sSL https://geoip.ytrack.io/install | sh
+
+# With cron for automatic updates
+curl -sSL "https://geoip.ytrack.io/install?with_cron=true" | sh
+
+# Custom installation directory
+curl -sSL "https://geoip.ytrack.io/install?install_dir=/usr/local/geoip" | sh
+```
+
+After installation:
+```bash
+# Set your API key
+export GEOIP_API_KEY=your-api-key
+
+# Download databases
+/opt/geoip/geoip-update.sh
+
+# Setup automatic updates (if not done during install)
+/opt/geoip/setup-cron.sh
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GEOIP_API_KEY` | **Required** - Your API key | - |
+| `GEOIP_TARGET_DIR` | Where to store databases | `/app/resources/geoip` |
+| `GEOIP_API_ENDPOINT` | API endpoint URL | `https://geoip.ytrack.io/auth` |
+| `GEOIP_DOWNLOAD_ON_START` | Download on container start | `true` |
+| `GEOIP_VALIDATE_ON_START` | Validate on start | `true` |
+| `GEOIP_SETUP_CRON` | Setup automatic updates | `true` |
+| `GEOIP_UPDATE_SCHEDULE` | Cron schedule | `0 2 * * *` (2 AM daily) |
+| `GEOIP_FAIL_ON_ERROR` | Exit on initialization error | `false` |
+| `GEOIP_DATABASES` | Specific databases or "all" | `all` |
+
+### Health Checks
+
+Add health checks to your Docker containers:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+    CMD sh -c '. /opt/geoip/entrypoint-helper.sh && geoip_health_check'
+```
+
+Or in docker-compose.yml:
+```yaml
+healthcheck:
+  test: ["CMD", "sh", "-c", ". /opt/geoip/entrypoint-helper.sh && geoip_health_check"]
+  interval: 30s
+  timeout: 3s
+  retries: 3
 ```
 
 ## 🔧 API Server Deployment

@@ -71,6 +71,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Scripts-Only Image for Integration
+          - name: geoip-scripts
+            context: .
+            dockerfile: docker/scripts/Dockerfile
+            description: "GeoIP scripts-only image for easy Docker integration"
+            category: scripts
+            
           # CLI Client Images
           - name: geoip-updater
             context: ./scripts/cli
@@ -257,6 +264,7 @@ jobs:
     strategy:
       matrix:
         image:
+          - geoip-scripts
           - geoip-updater
           - geoip-updater-cron
           - geoip-updater-k8s
@@ -306,6 +314,12 @@ jobs:
             ## Docker Images
 
             This release includes the following Docker images:
+            
+            ### Integration Image
+            ```bash
+            # Scripts-only image for easy integration (2-line Docker integration!)
+            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-scripts:${{ needs.setup.outputs.version }}
+            ```
             
             ### CLI Client Images
             ```bash
@@ -369,6 +383,9 @@ jobs:
           
           if [ "${{ needs.build-matrix.result }}" == "success" ]; then
             echo "✅ **Status**: All Docker images built and pushed successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Integration Image" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-scripts:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### CLI Client Images" >> $GITHUB_STEP_SUMMARY
             echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
