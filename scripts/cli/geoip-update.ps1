@@ -35,8 +35,16 @@
     Don't use lock file to prevent concurrent runs
 
 .EXAMPLE
-    .\geoip-update.ps1
-    Downloads all databases using environment variables
+    .\geoip-update.ps1 -ApiKey "your_key"
+    Downloads all databases using production endpoint
+
+.EXAMPLE
+    .\geoip-update.ps1 -ApiKey "test-key-1" -ApiEndpoint "http://localhost:8080/auth"
+    Local testing with Docker API
+
+.EXAMPLE
+    $env:GEOIP_API_ENDPOINT="http://localhost:8080/auth"; .\geoip-update.ps1 -ApiKey "test-key-1"
+    Using environment variables for local testing
 
 .EXAMPLE
     .\geoip-update.ps1 -ApiKey "your_key" -Databases @("GeoIP2-City.mmdb", "GeoIP2-Country.mmdb")
@@ -267,6 +275,17 @@ function Test-Configuration {
     # Check API endpoint
     if ([string]::IsNullOrWhiteSpace($ApiEndpoint)) {
         Exit-WithError -Message "API endpoint not configured"
+    }
+    
+    # Log endpoint being used (helpful for debugging)
+    if ($ApiEndpoint -match '^http://localhost|^http://127\.0\.0\.1') {
+        Write-LogMessage -Level INFO -Message "Using local API endpoint: $ApiEndpoint"
+    }
+    elseif ($ApiEndpoint -eq "https://geoip.ytrack.io/auth") {
+        Write-LogMessage -Level INFO -Message "Using production API endpoint: $ApiEndpoint"
+    }
+    else {
+        Write-LogMessage -Level INFO -Message "Using custom API endpoint: $ApiEndpoint"
     }
     
     # Create target directory if it doesn't exist

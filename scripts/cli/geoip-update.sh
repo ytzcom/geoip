@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Note: This script requires bash for advanced features like arrays and [[ ]] tests
+# For broader compatibility, ensure bash is available or use the Python version
 #
 # GeoIP Database Update Script
 # Downloads GeoIP databases from authenticated API
@@ -26,8 +28,15 @@
 #   GEOIP_LOG_FILE          Default log file
 #
 # Examples:
-#   # Download all databases
-#   ./geoip-update.sh
+#   # Download all databases (production endpoint)
+#   ./geoip-update.sh --api-key your-key
+#
+#   # Local testing with Docker API
+#   ./geoip-update.sh --api-key test-key-1 --endpoint http://localhost:8080/auth
+#
+#   # Using environment variables
+#   export GEOIP_API_ENDPOINT=http://localhost:8080/auth
+#   ./geoip-update.sh --api-key test-key-1
 #
 #   # Download specific databases quietly for cron
 #   ./geoip-update.sh -q -b "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
@@ -59,6 +68,7 @@ LOG_FILE="${GEOIP_LOG_FILE:-}"
 USE_LOCK=true
 MAX_RETRIES=$DEFAULT_RETRIES
 TIMEOUT=$DEFAULT_TIMEOUT
+TEMP_DIR=""
 
 # Color codes for output (disabled in quiet mode)
 RED='\033[0;31m'
@@ -181,8 +191,17 @@ validate_config() {
         error "API endpoint not configured"
     fi
     
-    # Validate API key format (basic check)
-    if [[ ! "$API_KEY" =~ ^[a-zA-Z0-9_-]{20,64}$ ]]; then
+    # Log endpoint being used (helpful for debugging)
+    if [[ "$API_ENDPOINT" =~ ^http://localhost|^http://127\.0\.0\.1 ]]; then
+        log INFO "Using local API endpoint: $API_ENDPOINT"
+    elif [[ "$API_ENDPOINT" == "$DEFAULT_ENDPOINT" ]]; then
+        log INFO "Using production API endpoint: $API_ENDPOINT"
+    else
+        log INFO "Using custom API endpoint: $API_ENDPOINT"
+    fi
+    
+    # Validate API key format (basic check) - allow shorter keys for testing
+    if [[ ! "$API_KEY" =~ ^[a-zA-Z0-9_-]{8,64}$ ]]; then
         error "Invalid API key format"
     fi
     
@@ -291,17 +310,47 @@ http_request() {
             --fail
         )
         
-        if [[ "$VERBOSE_MODE" == "true" ]]; then
+        # Note: We avoid using curl's --verbose flag when capturing response
+        # as it interferes with JSON parsing by mixing debug output with response
+        if [[ "$VERBOSE_MODE" == "true" ]] && [[ -n "$output_file" ]]; then
             curl_opts+=(--verbose)
+        elif [[ "$VERBOSE_MODE" == "true" ]]; then
+            # For verbose mode without output file, log curl command details
+            log INFO "Curl command details: ${curl_opts[*]} $url"
         fi
         
         if [[ "$method" == "POST" ]]; then
-            curl_opts+=(
-                --request POST
-                --header "Content-Type: application/json"
-                --header "X-API-Key: $API_KEY"
-                --data "{\"databases\": \"$DATABASES\"}"
-            )
+            # Format databases parameter correctly for API
+            if [[ "$DATABASES" == "all" ]]; then
+                curl_opts+=(
+                    --request POST
+                    --header "Content-Type: application/json"
+                    --header "X-API-Key: $API_KEY"
+                    --data '{"databases": "all"}'
+                )
+            else
+                # Convert comma-separated list to JSON array - use portable approach
+                db_array=""
+                saved_ifs="$IFS"
+                IFS=','
+                for db in $DATABASES; do
+                    # Trim whitespace
+                    db=$(echo "$db" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    if [[ -n "$db" ]]; then
+                        if [[ -n "$db_array" ]]; then
+                            db_array+=", "
+                        fi
+                        db_array+="\"$db\""
+                    fi
+                done
+                IFS="$saved_ifs"
+                curl_opts+=(
+                    --request POST
+                    --header "Content-Type: application/json"
+                    --header "X-API-Key: $API_KEY"
+                    --data "{\"databases\": [$db_array]}"
+                )
+            fi
         fi
         
         if [[ -n "$output_file" ]]; then
@@ -321,6 +370,13 @@ http_request() {
             curl_exit=$?
             http_code=$(echo "$response" | tail -n1)
             response=$(echo "$response" | sed '$d')
+            
+            # Debug output for verbose mode
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                log INFO "Raw response length: ${#response}"
+                log INFO "HTTP code: $http_code"
+                log INFO "First 200 chars of response: ${response:0:200}"
+            fi
         fi
         
         if [[ $curl_exit -eq 0 ]] && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then

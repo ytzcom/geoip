@@ -10,9 +10,23 @@ Usage:
     geoip-update --config config.yaml
     geoip-update --quiet --log-file /var/log/geoip-update.log
 
+Examples:
+    # Default (production endpoint)
+    geoip-update --api-key your-key
+    
+    # Local testing with Docker API
+    geoip-update --api-key test-key-1 --endpoint http://localhost:8080/auth
+    
+    # Using environment variables
+    export GEOIP_API_ENDPOINT=http://localhost:8080/auth
+    geoip-update --api-key test-key-1
+    
+    # Custom endpoint
+    geoip-update --api-key key --endpoint https://custom.api.example.com/auth
+
 Environment Variables:
     GEOIP_API_KEY       API key for authentication
-    GEOIP_API_ENDPOINT  API endpoint URL
+    GEOIP_API_ENDPOINT  API endpoint URL (default: https://geoip.ytrack.io/auth)
     GEOIP_TARGET_DIR    Default target directory
 """
 
@@ -551,13 +565,13 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
         logger.error("API key not provided. Use --api-key or set GEOIP_API_KEY")
         sys.exit(1)
     
-    if config_obj.api_endpoint == DEFAULT_ENDPOINT:
-        logger.warning("="*60)
-        logger.warning("IMPORTANT: Using placeholder API endpoint!")
-        logger.warning("Please update with your actual API Gateway URL:")
-        logger.warning("  1. Get URL from Terraform: terraform output api_gateway_url")
-        logger.warning("  2. Run: ./update-api-endpoint.sh <API_URL>")
-        logger.warning("="*60)
+    # Log endpoint being used (helpful for debugging)
+    if config_obj.api_endpoint.startswith('http://localhost') or config_obj.api_endpoint.startswith('http://127.0.0.1'):
+        logger.info(f"Using local API endpoint: {config_obj.api_endpoint}")
+    elif config_obj.api_endpoint == DEFAULT_ENDPOINT:
+        logger.info(f"Using production API endpoint: {config_obj.api_endpoint}")
+    else:
+        logger.info(f"Using custom API endpoint: {config_obj.api_endpoint}")
     
     # Signal handler for cleanup
     def signal_handler(signum, frame):
