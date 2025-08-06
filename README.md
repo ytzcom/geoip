@@ -258,7 +258,7 @@ cd scripts/cli
 # Download with API key
 ./geoip-update.sh -k YOUR_API_KEY
 
-# Or use Docker
+# Or use Docker CLI client
 docker run --rm \
   -e GEOIP_API_KEY=your-api-key \
   -v $(pwd)/data:/data \
@@ -272,6 +272,59 @@ docker run --rm \
 - **Go** (`main.go`) - Compiled binary
 
 See [CLI Documentation](scripts/cli/README.md) for detailed usage instructions.
+
+## 🐳 Docker Images
+
+Pre-built Docker images are available for both CLI clients and API server:
+
+### CLI Client Images
+
+```bash
+# Python CLI (default)
+docker pull ytzcom/geoip-updater:latest
+
+# Automated cron with supercronic
+docker pull ytzcom/geoip-updater-cron:latest
+
+# Kubernetes optimized
+docker pull ytzcom/geoip-updater-k8s:latest
+
+# Go binary (smallest)
+docker pull ytzcom/geoip-updater-go:latest
+```
+
+### API Server Images
+
+```bash
+# FastAPI server with S3 backend
+docker pull ytzcom/geoip-api:latest
+
+# Production with Nginx reverse proxy
+docker pull ytzcom/geoip-api-nginx:latest
+
+# Development with debug features
+docker pull ytzcom/geoip-api-dev:latest
+```
+
+**Quick API Server Setup:**
+```bash
+# Start API server with local storage (for testing)
+docker run -p 8080:8080 \
+  -e API_KEYS=your-test-key \
+  -e STORAGE_MODE=local \
+  -v ./data:/data \
+  ytzcom/geoip-api-dev:latest
+
+# Production deployment with S3 backend
+docker run -p 80:80 \
+  -e API_KEYS=your-production-keys \
+  -e S3_BUCKET=your-bucket \
+  -e AWS_ACCESS_KEY_ID=your-key \
+  -e AWS_SECRET_ACCESS_KEY=your-secret \
+  ytzcom/geoip-api-nginx:latest
+```
+
+See [API Documentation](infrastructure/docker-api/README.md) for detailed deployment instructions.
 
 ## 🔐 Security
 
