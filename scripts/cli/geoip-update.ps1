@@ -57,7 +57,7 @@ param(
     [string]$ApiKey = $env:GEOIP_API_KEY,
     
     [Parameter()]
-    [string]$ApiEndpoint = $(if ($env:GEOIP_API_ENDPOINT) { $env:GEOIP_API_ENDPOINT } else { "REPLACE_WITH_DEPLOYED_API_GATEWAY_URL/auth" }),
+    [string]$ApiEndpoint = $(if ($env:GEOIP_API_ENDPOINT) { $env:GEOIP_API_ENDPOINT } else { "https://geoip.ytrack.io/auth" }),
     
     [Parameter()]
     [string]$TargetDirectory = $(if ($env:GEOIP_TARGET_DIR) { $env:GEOIP_TARGET_DIR } else { ".\geoip" }),
