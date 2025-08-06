@@ -13,10 +13,18 @@ class Settings(BaseSettings):
     """Application settings with environment variable support."""
     
     # API Configuration
-    api_keys: List[str] = Field(
-        default_factory=lambda: os.environ.get('API_KEYS', '').split(',') if os.environ.get('API_KEYS') else [],
+    api_keys_str: str = Field(
+        default="",
+        alias="API_KEYS",
         description="Comma-separated list of allowed API keys"
     )
+    
+    @property
+    def api_keys(self) -> List[str]:
+        """Parse API keys from comma-separated string."""
+        if self.api_keys_str:
+            return [k.strip() for k in self.api_keys_str.split(',') if k.strip()]
+        return []
     
     # Storage Configuration
     storage_mode: str = Field(

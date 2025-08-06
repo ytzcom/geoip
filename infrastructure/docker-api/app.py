@@ -343,11 +343,12 @@ if settings.enable_admin:
         x_admin_key: Optional[str] = Header(None)
     ):
         """Reload API keys from environment (requires admin key)."""
+        global settings
+        
         if x_admin_key != settings.admin_key:
             raise HTTPException(status_code=401, detail="Invalid admin key")
         
         # Reload settings
-        global settings
         settings = get_settings(force_reload=True)
         
         logger.info(f"Reloaded API keys, now have {len(settings.api_keys)} keys")
