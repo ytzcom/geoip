@@ -1,0 +1,42 @@
+name: Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_host:
+        description: 'Target host(s) to deploy to (comma-separated for multiple hosts)'
+        required: true
+        type: string
+      deploy_user:
+        description: 'SSH username for deployment'
+        required: false
+        type: string
+        default: ''
+      deploy_port:
+        description: 'SSH port for deployment'
+        required: false
+        type: string
+        default: ''
+      deploy_branch:
+        description: 'Branch to deploy'
+        required: false
+        type: string
+        default: ''
+      environment_url:
+        description: 'Environment URL (for health check)'
+        required: false
+        type: string
+        default: 'https://geoip.ytrack.io'
+
+jobs:
+  deploy:
+    name: Deploy GeoIP API to Custom Host(s)
+    uses: ./.github/workflows/deploy.yml
+    with:
+      deploy_hosts: ${{ inputs.deploy_host }}
+      deploy_user: ${{ inputs.deploy_user || vars.DEPLOY_USER }}
+      deploy_port: ${{ inputs.deploy_port || vars.DEPLOY_PORT }}
+      deploy_branch: ${{ inputs.deploy_branch || github.ref_name }}
+      environment_name: manual-deployment
+      environment_url: ${{ inputs.environment_url }}
+    secrets: inherit

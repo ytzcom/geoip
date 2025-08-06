@@ -1,0 +1,123 @@
+name: Reusable Deploy Workflow
+
+on:
+  workflow_call:
+    inputs:
+      deploy_hosts:
+        description: 'Comma-separated list of target hosts'
+        required: true
+        type: string
+      deploy_user:
+        description: 'SSH username for deployment'
+        required: true
+        type: string
+      deploy_port:
+        description: 'SSH port for deployment'
+        required: true
+        type: string
+      deploy_branch:
+        description: 'Branch to deploy'
+        required: false
+        type: string
+        default: 'main'
+      environment_name:
+        description: 'GitHub environment name'
+        required: false
+        type: string
+        default: 'production'
+      environment_url:
+        description: 'Environment URL'
+        required: false
+        type: string
+        default: 'https://geoip.ytrack.io'
+    secrets:
+      DEPLOY_KEY:
+        required: true
+      DOTENV_TOKEN:
+        required: false
+
+jobs:
+  setup:
+    name: Setup Deploy Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - name: Convert hosts to matrix
+      id: set-matrix
+      run: |
+        # Convert comma-separated hosts to JSON array
+        HOSTS="${{ inputs.deploy_hosts }}"
+        if [[ "$HOSTS" == *","* ]]; then
+          # Multiple hosts - split by comma and create JSON array
+          JSON_ARRAY=$(echo "$HOSTS" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
+        else
+          # Single host - create JSON array with one element
+          JSON_ARRAY=$(echo "[\"$HOSTS\"]" | jq -c '.')
+        fi
+        echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
+        echo "Hosts matrix: $JSON_ARRAY"
+
+  deploy:
+    name: Deploy to Server
+    needs: setup
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+      url: ${{ inputs.environment_url }}
+
+    strategy:
+      matrix:
+        host: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    steps:
+    - name: Deploy to server ${{ matrix.host }}
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ matrix.host }}
+        username: ${{ inputs.deploy_user }}
+        key: ${{ secrets.DEPLOY_KEY }}
+        port: ${{ inputs.deploy_port }}
+        script: |
+          set -e
+
+          echo "🎯 Deploying GeoIP API to host: ${{ matrix.host }}"
+
+          # Export environment variables for the deployment script
+          export DEPLOY_DIR="/data/sites/live_projects/geoip-api"
+          export REPO_URL="git@github.com:${{ github.repository }}.git"
+          export BRANCH="${{ inputs.deploy_branch }}"
+          export DOTENV_TOKEN="${{ secrets.DOTENV_TOKEN }}"
+
+          # Handle deployment
+          if [ -d "$DEPLOY_DIR" ]; then
+            echo "📂 Repository exists, updating to latest version..."
+            cd "$DEPLOY_DIR"
+
+            # Run the deployment script
+            echo "🚀 Running deployment script..."
+            bash infrastructure/docker-deploy.sh
+          else
+            # Initial deployment - clone and run
+            echo "📥 Initial deployment - setting up repository..."
+            mkdir -p "$(dirname "$DEPLOY_DIR")"
+            cd "$(dirname "$DEPLOY_DIR")"
+            git clone "$REPO_URL" "$(basename "$DEPLOY_DIR")"
+            cd "$DEPLOY_DIR"
+
+            # Run deployment script
+            bash infrastructure/docker-deploy.sh
+          fi
+
+  check-deployment:
+    name: Check Deployment Health
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+    - name: Check deployment health
+      uses: jtalk/url-health-check-action@v4
+      with:
+        url: ${{ inputs.environment_url }}/health
+        max-attempts: 5
+        retry-delay: 10s
