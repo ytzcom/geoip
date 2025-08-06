@@ -49,6 +49,9 @@ services:
     tmpfs:
       - /tmp
     
+    # Network mode for local testing
+    network_mode: host
+    
     # Restart policy
     restart: unless-stopped
     
@@ -93,3 +96,4 @@ volumes:
 networks:
   default:
     name: geoip-network
+    external: false
