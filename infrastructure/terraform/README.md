@@ -38,7 +38,7 @@ If you prefer to deploy manually:
 # Create terraform.tfvars
 cat > terraform.tfvars <<EOF
 api_keys = "your-key-1,your-key-2,your-key-3"
-s3_bucket_name = "ytz-geoip"  # Your S3 bucket
+s3_bucket_name = "your-s3-bucket"  # Replace with your S3 bucket name
 aws_region = "us-east-1"
 EOF
 
@@ -60,7 +60,7 @@ terraform apply
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `api_keys` | Comma-separated list of API keys | "" (set via tfvars) |
-| `s3_bucket_name` | S3 bucket containing GeoIP files | "ytz-geoip" |
+| `s3_bucket_name` | S3 bucket containing GeoIP files | "your-s3-bucket" |
 | `aws_region` | AWS region for deployment | "us-east-1" |
 | `environment` | Environment name for tagging | "production" |
 

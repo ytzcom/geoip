@@ -173,7 +173,7 @@ Set in `terraform.tfvars` or during deployment:
 ```hcl
 # terraform.tfvars
 api_keys = "key1,key2,key3"
-s3_bucket_name = "ytz-geoip"  # Optional, defaults to ytz-geoip
+s3_bucket_name = "your-s3-bucket"  # Optional, replace with your bucket name
 aws_region = "us-east-1"       # Optional, defaults to us-east-1
 ```
 

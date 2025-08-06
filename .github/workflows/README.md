@@ -58,7 +58,7 @@ Automated Docker image building and publishing to Docker Hub.
 ## Required Variables
 
 ### For update-geoip.yml:
-- `S3_BUCKET` - S3 bucket name (default: ytz-geoip)
+- `S3_BUCKET` - S3 bucket name (default: your-s3-bucket)
 - `AWS_REGION` - AWS region (default: us-east-1)
 - `MAXMIND_ACCOUNT_ID` - MaxMind account ID
 - `CREATE_ISSUE_ON_FAILURE` - Create GitHub issue on failure (true/false)

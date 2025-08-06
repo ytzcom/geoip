@@ -45,7 +45,7 @@ docker build -t geoip-api .
 docker run -p 8080:8080 \
   -e API_KEYS="key1,key2,key3" \
   -e STORAGE_MODE="s3" \
-  -e S3_BUCKET="ytz-geoip" \
+  -e S3_BUCKET="your-s3-bucket" \
   geoip-api
 ```
 
@@ -73,7 +73,7 @@ Generates pre-signed URLs for S3-hosted databases:
 docker run -p 8080:8080 \
   -e API_KEYS="key1,key2" \
   -e STORAGE_MODE="s3" \
-  -e S3_BUCKET="ytz-geoip" \
+  -e S3_BUCKET="your-s3-bucket" \
   -e AWS_ACCESS_KEY_ID="your-key" \
   -e AWS_SECRET_ACCESS_KEY="your-secret" \
   geoip-api
@@ -97,7 +97,7 @@ Tries local files first, falls back to S3:
 docker run -p 8080:8080 \
   -e API_KEYS="key1,key2" \
   -e STORAGE_MODE="hybrid" \
-  -e S3_BUCKET="ytz-geoip" \
+  -e S3_BUCKET="your-s3-bucket" \
   -v /path/to/geoip/databases:/data:ro \
   geoip-api
 ```
@@ -108,7 +108,7 @@ docker run -p 8080:8080 \
 |----------|-------------|---------|
 | `API_KEYS` | Comma-separated list of allowed API keys | *Required* |
 | `STORAGE_MODE` | Storage backend: `s3`, `local`, or `hybrid` | `s3` |
-| `S3_BUCKET` | S3 bucket name (for s3/hybrid modes) | `ytz-geoip` |
+| `S3_BUCKET` | S3 bucket name (for s3/hybrid modes) | `your-s3-bucket` |
 | `AWS_ACCESS_KEY_ID` | AWS credentials (optional, uses IAM role if not set) | - |
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials (optional, uses IAM role if not set) | - |
 | `AWS_REGION` | AWS region | `us-east-1` |
@@ -277,7 +277,7 @@ spec:
         - name: STORAGE_MODE
           value: "s3"
         - name: S3_BUCKET
-          value: "ytz-geoip"
+          value: "your-s3-bucket"
         livenessProbe:
           httpGet:
             path: /health
@@ -393,7 +393,7 @@ docker exec geoip-api env | grep AWS
 docker exec geoip-api python -c "
 import boto3
 s3 = boto3.client('s3')
-print(s3.list_objects_v2(Bucket='ytz-geoip', MaxKeys=1))
+print(s3.list_objects_v2(Bucket='your-s3-bucket', MaxKeys=1))
 "
 ```
 

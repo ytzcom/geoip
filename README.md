@@ -36,7 +36,7 @@ docker run --rm \
 
 ```bash
 # Clone the repository
-git clone https://github.com/ytzcom/geoip-updater.git
+git clone https://github.com/ytzcom/geoip.git
 cd geoip-updater/scripts/cli
 
 # Run with your preferred script
@@ -172,7 +172,7 @@ docker run --rm \
 
 ```bash
 # Clone repository
-git clone https://github.com/ytzcom/geoip-updater.git
+git clone https://github.com/ytzcom/geoip.git
 cd geoip-updater/scripts/cli/docker
 
 # Configure environment
@@ -278,7 +278,7 @@ volumes:
 docker run -p 8080:8080 \
   -e API_KEYS=key1,key2,key3 \
   -e STORAGE_MODE=s3 \
-  -e S3_BUCKET=ytz-geoip \
+  -e S3_BUCKET=your-s3-bucket \
   -e AWS_ACCESS_KEY_ID=your-key \
   -e AWS_SECRET_ACCESS_KEY=your-secret \
   ytzcom/geoip-api:latest
@@ -298,7 +298,7 @@ docker run -d \
   --name geoip-api \
   -p 80:80 -p 443:443 \
   -e API_KEYS=${API_KEYS} \
-  -e S3_BUCKET=ytz-geoip \
+  -e S3_BUCKET=your-s3-bucket \
   -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
   -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
   -v ./ssl:/etc/nginx/ssl:ro \
@@ -580,7 +580,7 @@ See [infrastructure/docker-api](infrastructure/docker-api) for containerized API
 ## 🤝 Contributing
 
 ### Triggering Manual Updates
-1. Go to the [Actions tab](https://github.com/ytzcom/geoip-updater/actions)
+1. Go to the [Actions tab](https://github.com/ytzcom/geoip/actions)
 2. Select "Update GeoIP Databases"
 3. Click "Run workflow"
 
@@ -590,7 +590,7 @@ See [infrastructure/docker-api](infrastructure/docker-api) for containerized API
 3. Submit a pull request
 
 ### Reporting Issues
-Please use the [Issues tab](https://github.com/ytzcom/geoip-updater/issues) to report bugs or request features.
+Please use the [Issues tab](https://github.com/ytzcom/geoip/issues) to report bugs or request features.
 
 ## 📄 License
 
@@ -619,4 +619,4 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 
 ---
 
-**Last Update:** See [GitHub Actions](https://github.com/ytzcom/geoip-updater/actions/workflows/update-geoip.yml) for latest run
+**Last Update:** See [GitHub Actions](https://github.com/ytzcom/geoip/actions/workflows/update-geoip.yml) for latest run
