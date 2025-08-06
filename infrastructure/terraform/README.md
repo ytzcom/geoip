@@ -1,161 +1,186 @@
 # GeoIP Authentication Infrastructure
 
-This directory contains the Terraform configuration for setting up the GeoIP authentication infrastructure on AWS.
+Terraform configuration for deploying the GeoIP authentication system to AWS.
 
 ## Architecture
 
-The infrastructure consists of:
-- **API Gateway**: REST API endpoint for authentication
+This infrastructure creates:
 - **Lambda Function**: Validates API keys and generates pre-signed S3 URLs
-- **DynamoDB Table**: Stores API keys and usage data
+- **API Gateway**: HTTP API endpoint for authentication
 - **CloudWatch Logs**: API and Lambda logging
 
 ## Prerequisites
 
-1. AWS CLI configured with appropriate credentials
-2. Terraform installed (>= 1.0)
-3. Python 3.11+ for Lambda function
-4. Existing S3 bucket with GeoIP databases
+- [Terraform](https://www.terraform.io/downloads.html) >= 1.0
+- [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate credentials
+- An existing S3 bucket with GeoIP database files
 
-## Setup Instructions
+## Quick Start
 
-### 1. Package Lambda Function
-
-First, package the Lambda function code:
+### 1. Deploy Everything with One Command
 
 ```bash
+cd ../  # Go to infrastructure directory
+./deploy.sh
+```
+
+The deployment script will:
+- Generate or accept API keys
+- Package the Lambda function
+- Deploy all infrastructure
+- Output the API endpoint
+
+### 2. Manual Deployment
+
+If you prefer to deploy manually:
+
+```bash
+# Create terraform.tfvars
+cat > terraform.tfvars <<EOF
+api_keys = "your-key-1,your-key-2,your-key-3"
+s3_bucket_name = "ytz-geoip"  # Your S3 bucket
+aws_region = "us-east-1"
+EOF
+
+# Package Lambda
 cd ../lambda
-pip install -r requirements.txt -t package/
-cp auth_handler.py package/
-cd package
-zip -r ../lambda_function.zip .
-cd ..
-mv lambda_function.zip ../terraform/
+zip ../terraform/lambda_deployment.zip auth_handler.py
 cd ../terraform
-```
 
-### 2. Initialize Terraform
-
-```bash
+# Deploy
 terraform init
-```
-
-### 3. Configure Variables
-
-Create a `terraform.tfvars` file:
-
-```hcl
-aws_region     = "us-east-1"
-environment    = "production"
-s3_bucket_name = "ytz-geoip"
-```
-
-### 4. Deploy Infrastructure
-
-```bash
-# Review the plan
 terraform plan
-
-# Apply the configuration
 terraform apply
 ```
 
-### 5. Note the Outputs
+## Configuration
+
+### Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `api_keys` | Comma-separated list of API keys | "" (set via tfvars) |
+| `s3_bucket_name` | S3 bucket containing GeoIP files | "ytz-geoip" |
+| `aws_region` | AWS region for deployment | "us-east-1" |
+| `environment` | Environment name for tagging | "production" |
+
+### Setting API Keys
+
+Three ways to set API keys:
+
+1. **terraform.tfvars file** (recommended):
+   ```hcl
+   api_keys = "key1,key2,key3"
+   ```
+
+2. **Environment variable**:
+   ```bash
+   export TF_VAR_api_keys="key1,key2,key3"
+   terraform apply
+   ```
+
+3. **Command line**:
+   ```bash
+   terraform apply -var="api_keys=key1,key2,key3"
+   ```
+
+## Outputs
 
 After deployment, Terraform will output:
-- `api_endpoint`: The API Gateway URL for authentication
-- `dynamodb_table`: The DynamoDB table name
-- `lambda_function`: The Lambda function name
+- `api_gateway_url`: The API endpoint for authentication
+- `lambda_function_name`: The Lambda function name
+- `lambda_function_arn`: The Lambda function ARN
 
-## Managing API Keys
+## Updating API Keys
 
-Use the provided Python script to manage API keys:
-
-### Create a New API Key
+To update API keys after deployment:
 
 ```bash
-# Basic usage
-python manage_api_keys.py create --name "John Doe" --email "john@example.com"
+# Option 1: Use the management script
+../manage-api-keys.sh
 
-# With expiration
-python manage_api_keys.py create --name "Jane Doe" --email "jane@example.com" --expires-days 365
+# Option 2: Update via Terraform
+terraform apply -var="api_keys=new-key-1,new-key-2"
 
-# With specific database access
-python manage_api_keys.py create --name "Limited User" --email "limited@example.com" \
-  --databases GeoIP2-City.mmdb GeoIP2-Country.mmdb
+# Option 3: Direct AWS CLI
+aws lambda update-function-configuration \
+  --function-name geoip-auth \
+  --environment Variables={ALLOWED_API_KEYS="key1,key2,key3"}
 ```
 
-### List All API Keys
+## Testing
+
+Test your deployment:
 
 ```bash
-python manage_api_keys.py list
+# Get the API URL
+API_URL=$(terraform output -raw api_gateway_url)
+
+# Test with curl
+curl -X POST "$API_URL" \
+  -H 'X-API-Key: your-key-here' \
+  -H 'Content-Type: application/json' \
+  -d '{"databases": "all"}'
 ```
-
-### Revoke an API Key
-
-```bash
-python manage_api_keys.py revoke --key "geoip_xxxxxxxxxxxxx"
-```
-
-### Get API Key Statistics
-
-```bash
-python manage_api_keys.py stats --key "geoip_xxxxxxxxxxxxx"
-```
-
-## API Usage
-
-Once deployed, users can authenticate and get download URLs:
-
-```bash
-curl -X POST https://your-api-endpoint/v1/auth \
-  -H "X-API-Key: geoip_xxxxxxxxxxxxx" \
-  -H "Content-Type: application/json" \
-  -d '{"databases": ["GeoIP2-City.mmdb", "GeoIP2-Country.mmdb"]}'
-```
-
-Response:
-```json
-{
-  "GeoIP2-City.mmdb": "https://s3.amazonaws.com/...",
-  "GeoIP2-Country.mmdb": "https://s3.amazonaws.com/..."
-}
-```
-
-## Rate Limiting
-
-The API enforces rate limiting:
-- Default: 100 requests per hour per API key
-- Configurable via environment variables
 
 ## Monitoring
 
-- API Gateway logs: `/aws/apigateway/geoip-auth`
-- Lambda logs: `/aws/lambda/geoip-auth`
+View Lambda logs:
 
-## Security Considerations
+```bash
+# Recent logs
+aws logs tail /aws/lambda/geoip-auth
 
-1. API keys are hashed before storage
-2. Pre-signed URLs expire after 1 hour
-3. Rate limiting prevents abuse
-4. All requests are logged for audit
-5. HTTPS only for API endpoints
+# Follow logs
+aws logs tail /aws/lambda/geoip-auth --follow
+```
+
+Check metrics in CloudWatch:
+- Invocation count
+- Error rate
+- Duration
+- Throttles
+
+## Cost Estimation
+
+Typical monthly costs (low volume):
+- Lambda: ~$0.20/month
+- API Gateway: ~$3.50/month
+- CloudWatch Logs: ~$0.50/month
+- **Total**: ~$4.20/month
 
 ## Cleanup
 
-To destroy the infrastructure:
+To remove all infrastructure:
 
 ```bash
 terraform destroy
 ```
 
-## Cost Estimates
+This will remove:
+- Lambda function
+- API Gateway
+- IAM roles and policies
+- CloudWatch log groups
 
-With moderate usage (1000 requests/day):
-- API Gateway: ~$3.50/month
-- Lambda: ~$0.20/month
-- DynamoDB: ~$0.25/month
-- CloudWatch Logs: ~$0.50/month
-- **Total**: ~$4.45/month
+## Troubleshooting
 
-Note: S3 costs for database storage and data transfer are separate.
+### Lambda function fails to create
+- Check that `lambda_deployment.zip` exists
+- Verify IAM permissions for Lambda creation
+
+### API Gateway returns 500 errors
+- Check Lambda logs for errors
+- Verify S3 bucket name and permissions
+- Ensure API keys are set correctly
+
+### Cannot update API keys
+- Ensure you have Lambda update permissions
+- Check that the function exists: `aws lambda get-function --function-name geoip-auth`
+
+## Security Notes
+
+- API keys are stored as Lambda environment variables
+- All API Gateway traffic is HTTPS only
+- Lambda has minimal S3 permissions (GetObject only)
+- Consider enabling API Gateway throttling for production use
