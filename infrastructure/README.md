@@ -1,20 +1,47 @@
 # GeoIP Authentication System
 
-A Lambda-based authentication system for GeoIP database downloads using environment variables for API key storage. Perfect for internal use.
+Flexible authentication system for GeoIP database downloads with multiple deployment options:
+- **AWS Lambda** - Serverless deployment with CloudFront custom domain
+- **Docker API** - Containerized deployment for any infrastructure
+- **Environment-based** - API keys in environment variables (no database)
 
 ## 🎯 Overview
 
-This authentication system provides secure access to GeoIP databases with minimal infrastructure:
+Choose your deployment method based on your infrastructure:
+
+### Option 1: AWS Lambda (Serverless)
 - **API keys stored in Lambda environment variables** (no database needed)
 - **Clean, maintainable code** (~50 lines)
 - **Single Terraform configuration**
 - **One-command deployment**
 - **Custom domain support** via CloudFront (geoip.ytrack.io)
-- **Perfect for internal projects**
+- **Perfect for AWS environments**
+
+### Option 2: Docker API (Container)
+- **Run anywhere** - VPS, Kubernetes, Docker Swarm, etc.
+- **Multiple storage backends** - S3, local files, or hybrid
+- **Production ready** - Health checks, metrics, multi-worker
+- **Same API interface** - Compatible with Lambda version
+- **Perfect for non-AWS environments**
+
+## 🚦 Deployment Options
+
+### Comparison Table
+
+| Feature | AWS Lambda | Docker API |
+|---------|------------|------------|
+| **Infrastructure** | AWS only | Any (VPS, K8s, local) |
+| **Scaling** | Automatic | Manual/Orchestrator |
+| **Cold Start** | ~1-2s first request | None |
+| **Maintenance** | AWS managed | Self-managed |
+| **Storage Options** | S3 only | S3, Local, Hybrid |
+| **Custom Domain** | CloudFront | Any proxy/LB |
+| **Cost Model** | Pay per request | Fixed server cost |
+| **Setup Time** | 5 minutes | 10 minutes |
 
 ## 🚀 Quick Start
 
-### 1. Deploy with One Command
+### AWS Lambda Deployment
 
 ```bash
 cd infrastructure
@@ -26,6 +53,20 @@ The script will:
 - Package and deploy the Lambda function
 - Create the API Gateway endpoint
 - Update all CLI scripts with the new endpoint
+
+### Docker Deployment
+
+```bash
+cd infrastructure/docker-api
+cp .env.example .env
+# Edit .env with your API keys
+docker-compose up -d
+```
+
+This will:
+- Build the Docker image
+- Start the API server on port 8080
+- Use S3 backend by default (configurable)
 
 ### 2. Manage API Keys
 
@@ -48,7 +89,14 @@ infrastructure/
 │   └── auth_handler.py          # Lambda function (50 lines)
 ├── terraform/
 │   └── main.tf                  # Terraform configuration
-├── deploy.sh                    # One-command deployment
+├── docker-api/                  # Docker deployment option
+│   ├── app.py                   # FastAPI server
+│   ├── config.py                # Configuration management
+│   ├── Dockerfile               # Container image
+│   ├── docker-compose.yml       # Standard deployment
+│   ├── docker-compose.prod.yml  # Production with nginx
+│   └── docker-compose.local.yml # Local development
+├── deploy.sh                    # Lambda deployment script
 └── manage-api-keys.sh           # Key management script
 ```
 
@@ -100,6 +148,7 @@ Client Request → CloudFront (geoip.ytrack.io) → API Gateway → Lambda → V
 
 ## 💰 Cost Breakdown
 
+### AWS Lambda Option
 | Component | Monthly Cost |
 |-----------|-------------|
 | Lambda | ~$0.20/month |
@@ -107,7 +156,14 @@ Client Request → CloudFront (geoip.ytrack.io) → API Gateway → Lambda → V
 | CloudFront | ~$0.50/month |
 | **Total** | **~$4.20/month** |
 
-*Minimal infrastructure with no database costs*
+### Docker Option
+| Component | Monthly Cost |
+|-----------|-------------|
+| VPS (1GB RAM) | ~$5-10/month |
+| Or Kubernetes Pod | ~$0.05/hour |
+| Or Local Server | $0 |
+
+*Choose based on your existing infrastructure*
 
 ## 🔧 Configuration
 
@@ -265,6 +321,19 @@ aws logs filter-log-events --log-group-name /aws/lambda/geoip-auth \
 - ✅ Small teams (2-10 API keys)
 - ✅ Simple authentication needs
 - ✅ Minimal infrastructure requirements
+- ✅ Multi-cloud or hybrid deployments
+
+### Choose Lambda When:
+- ✅ Already using AWS infrastructure
+- ✅ Want serverless with no server management
+- ✅ Need auto-scaling without configuration
+- ✅ Prefer pay-per-request pricing
+
+### Choose Docker When:
+- ✅ Have existing Docker/Kubernetes infrastructure
+- ✅ Need to run on-premises or private cloud
+- ✅ Want to serve files locally (no S3 costs)
+- ✅ Require custom modifications or extensions
 
 ### Consider Alternatives When:
 - ❌ Public API service needed

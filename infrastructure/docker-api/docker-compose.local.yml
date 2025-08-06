@@ -1,0 +1,53 @@
+version: '3.8'
+
+# Local development configuration with file serving
+services:
+  geoip-api:
+    build: .
+    image: geoip-api:latest
+    container_name: geoip-api-local
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # API Configuration
+      - API_KEYS=${API_KEYS:-dev-key-1,dev-key-2}
+      
+      # Storage Configuration - Local mode for development
+      - STORAGE_MODE=local
+      
+      # Local Storage
+      - LOCAL_DATA_PATH=/data
+      
+      # Server Configuration
+      - WORKERS=1
+      - DEBUG=${DEBUG:-true}
+      
+      # Admin Configuration
+      - ENABLE_ADMIN=true
+      - ADMIN_KEY=${ADMIN_KEY:-admin-dev-key}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+    
+    volumes:
+      # Mount local GeoIP database directory
+      # Update this path to point to your actual GeoIP database files
+      - ${LOCAL_DATA_PATH:-../../temp/raw}:/data:ro
+      
+      # Mount source code for hot reload in debug mode
+      - ./app.py:/app/app.py:ro
+      - ./config.py:/app/config.py:ro
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
