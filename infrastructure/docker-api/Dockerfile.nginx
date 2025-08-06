@@ -1,0 +1,124 @@
+# Production API server with Nginx reverse proxy
+# Multi-stage build for optimized production deployment
+
+# Stage 1: Build API server
+FROM python:3.11-slim as api-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Stage 2: Production runtime
+FROM python:3.11-slim as api-runtime
+
+# Create non-root user
+RUN useradd -m -u 1000 -s /bin/bash geoip && \
+    mkdir -p /data /app && \
+    chown -R geoip:geoip /data /app
+
+# Copy virtual environment from builder
+COPY --from=api-builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Copy application files
+COPY --chown=geoip:geoip app.py config.py ./
+
+# Switch to non-root user
+USER geoip
+
+# Environment variables
+ENV STORAGE_MODE=s3 \
+    PORT=8080 \
+    WORKERS=4 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Stage 3: Final production image with Nginx
+FROM nginx:alpine
+
+# Install Python runtime and supervisor
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    supervisor \
+    curl \
+    && rm -rf /var/cache/apk/*
+
+# Copy API runtime from previous stage
+COPY --from=api-runtime /opt/venv /opt/venv
+COPY --from=api-runtime /app /app
+
+# Create geoip user in alpine
+RUN addgroup -g 1000 geoip && \
+    adduser -D -u 1000 -G geoip -h /home/geoip geoip && \
+    mkdir -p /data && \
+    chown -R geoip:geoip /data /app
+
+# Copy Nginx configuration
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Create supervisor configuration
+RUN mkdir -p /etc/supervisor/conf.d
+COPY <<EOF /etc/supervisor/conf.d/supervisord.conf
+[supervisord]
+nodaemon=true
+user=root
+logfile=/var/log/supervisor/supervisord.log
+pidfile=/var/run/supervisord.pid
+
+[program:nginx]
+command=nginx -g "daemon off;"
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+autorestart=true
+user=root
+
+[program:geoip-api]
+command=/opt/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8080 --workers 4
+directory=/app
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+autorestart=true
+user=geoip
+environment=PATH="/opt/venv/bin:%(ENV_PATH)s",PYTHONPATH="/app",STORAGE_MODE="s3",PYTHONUNBUFFERED="1"
+EOF
+
+# Set environment variables
+ENV PATH="/opt/venv/bin:$PATH" \
+    STORAGE_MODE=s3 \
+    WORKERS=4 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost/health || exit 1
+
+# Expose port
+EXPOSE 80 443
+
+# Labels
+LABEL org.opencontainers.image.title="geoip-api-nginx" \
+      org.opencontainers.image.description="GeoIP Authentication API Server with Nginx" \
+      org.opencontainers.image.vendor="YTZ" \
+      org.opencontainers.image.authors="YTZ" \
+      org.opencontainers.image.source="https://github.com/ytzcom/geoip-updater"
+
+# Run supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

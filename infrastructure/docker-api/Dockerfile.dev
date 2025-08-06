@@ -1,0 +1,76 @@
+# Development API server with debugging features and local storage support
+FROM python:3.11-slim
+
+# Install system dependencies including development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    curl \
+    vim \
+    iputils-ping \
+    telnet \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user with home directory
+RUN useradd -m -u 1000 -s /bin/bash geoip && \
+    mkdir -p /data /app /logs && \
+    chown -R geoip:geoip /data /app /logs
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install with development dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir \
+    python-dotenv \
+    ipython \
+    pytest \
+    pytest-asyncio \
+    httpx
+
+# Copy application files
+COPY --chown=geoip:geoip app.py config.py ./
+
+# Create development data directory with sample files
+RUN mkdir -p /data/raw/maxmind /data/raw/ip2location && \
+    chown -R geoip:geoip /data
+
+# Switch to non-root user
+USER geoip
+
+# Environment variables for development
+ENV STORAGE_MODE=local \
+    LOCAL_DATA_PATH=/data \
+    PORT=8080 \
+    WORKERS=1 \
+    DEBUG=true \
+    LOG_LEVEL=DEBUG \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    RELOAD=true
+
+# Create development configuration file
+RUN echo 'API_KEYS=dev-key-1,dev-key-2,test-key-1' > /app/.env && \
+    echo 'STORAGE_MODE=local' >> /app/.env && \
+    echo 'LOCAL_DATA_PATH=/data' >> /app/.env && \
+    echo 'DEBUG=true' >> /app/.env && \
+    echo 'LOG_LEVEL=DEBUG' >> /app/.env
+
+# Health check with extended timeout for development
+HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=2 \
+    CMD python -c "import requests; requests.get('http://localhost:8080/health', timeout=10).raise_for_status()" || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Labels
+LABEL org.opencontainers.image.title="geoip-api-dev" \
+      org.opencontainers.image.description="GeoIP Authentication API Server - Development" \
+      org.opencontainers.image.vendor="YTZ" \
+      org.opencontainers.image.authors="YTZ" \
+      org.opencontainers.image.source="https://github.com/ytzcom/geoip-updater" \
+      org.opencontainers.image.documentation="https://github.com/ytzcom/geoip-updater/blob/main/infrastructure/docker-api/README.md"
+
+# Development startup with auto-reload
+CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--log-level", "debug"]

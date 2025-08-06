@@ -11,6 +11,7 @@ on:
       - main
     paths:
       - 'scripts/cli/**'
+      - 'infrastructure/docker-api/**'
       - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
@@ -61,7 +62,7 @@ jobs:
       - name: Generate cache key
         id: cache
         run: |
-          echo "key=docker-${{ runner.os }}-${{ hashFiles('scripts/cli/requirements.txt', 'scripts/cli/go/go.mod') }}" >> $GITHUB_OUTPUT
+          echo "key=docker-${{ runner.os }}-${{ hashFiles('scripts/cli/requirements.txt', 'scripts/cli/go/go.mod', 'infrastructure/docker-api/requirements.txt') }}" >> $GITHUB_OUTPUT
 
   build-matrix:
     runs-on: ubuntu-latest
@@ -70,25 +71,49 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # CLI Client Images
           - name: geoip-updater
             context: ./scripts/cli
             dockerfile: docker/Dockerfile
             description: "GeoIP database updater - Python CLI"
+            category: cli
             
           - name: geoip-updater-cron
             context: ./scripts/cli
             dockerfile: docker/Dockerfile.cron-secure
             description: "GeoIP database updater - Secure Cron with supercronic"
+            category: cli
             
           - name: geoip-updater-k8s
             context: ./scripts/cli
             dockerfile: k8s/Dockerfile
             description: "GeoIP database updater - Kubernetes optimized"
+            category: cli
             
           - name: geoip-updater-go
             context: ./scripts/cli
             dockerfile: docker/Dockerfile.go
             description: "GeoIP database updater - Go binary"
+            category: cli
+
+          # API Server Images
+          - name: geoip-api
+            context: ./infrastructure/docker-api
+            dockerfile: Dockerfile
+            description: "GeoIP Authentication API Server - FastAPI with S3 backend"
+            category: api
+            
+          - name: geoip-api-nginx
+            context: ./infrastructure/docker-api
+            dockerfile: Dockerfile.nginx
+            description: "GeoIP Authentication API Server - Production with Nginx reverse proxy"
+            category: api
+            
+          - name: geoip-api-dev
+            context: ./infrastructure/docker-api
+            dockerfile: Dockerfile.dev
+            description: "GeoIP Authentication API Server - Development with debug features"
+            category: api
 
     steps:
       - name: Checkout code
@@ -138,6 +163,8 @@ jobs:
             org.opencontainers.image.title=${{ matrix.name }}
             org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.vendor=YTZ
+            org.opencontainers.image.category=${{ matrix.category }}
+            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip-updater/blob/main/${{ matrix.category == 'api' && 'infrastructure/docker-api' || 'scripts/cli' }}/README.md
             maintainer=YTZ
 
       - name: Build and push Docker image
@@ -234,6 +261,9 @@ jobs:
           - geoip-updater-cron
           - geoip-updater-k8s
           - geoip-updater-go
+          - geoip-api
+          - geoip-api-nginx
+          - geoip-api-dev
     steps:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -277,6 +307,7 @@ jobs:
 
             This release includes the following Docker images:
             
+            ### CLI Client Images
             ```bash
             # Python CLI version
             docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
@@ -291,6 +322,18 @@ jobs:
             docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-go:${{ needs.setup.outputs.version }}
             ```
 
+            ### API Server Images
+            ```bash
+            # FastAPI server with S3 backend
+            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ needs.setup.outputs.version }}
+            
+            # Production server with Nginx reverse proxy
+            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ needs.setup.outputs.version }}
+            
+            # Development server with debug features
+            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-dev:${{ needs.setup.outputs.version }}
+            ```
+
             ## What's Changed
             Please see the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
 
@@ -298,7 +341,13 @@ jobs:
             
             All images are signed with Cosign. To verify:
             ```bash
+            # Verify CLI images
             cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
+            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ needs.setup.outputs.version }}
+            
+            # Verify API images  
+            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ needs.setup.outputs.version }}
+            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ needs.setup.outputs.version }}
             ```
 
             ## SBOMs
@@ -321,11 +370,16 @@ jobs:
           if [ "${{ needs.build-matrix.result }}" == "success" ]; then
             echo "✅ **Status**: All Docker images built and pushed successfully" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Images Published" >> $GITHUB_STEP_SUMMARY
+            echo "### CLI Client Images" >> $GITHUB_STEP_SUMMARY
             echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
             echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
             echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-updater-k8s:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
             echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-updater-go:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### API Server Images" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.DOCKER_NAMESPACE }}/geoip-api-dev:${{ needs.setup.outputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ **Status**: Docker image build failed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
