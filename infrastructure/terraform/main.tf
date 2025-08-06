@@ -210,3 +210,143 @@ output "setup_instructions" {
     ============================================
   EOT
 }
+
+# ============================================
+# Custom Domain Configuration
+# ============================================
+
+# Variables for custom domain
+variable "custom_domain_name" {
+  description = "Custom domain name for the API"
+  type        = string
+  default     = "geoip.ytrack.io"
+}
+
+variable "acm_certificate_arn" {
+  description = "ARN of existing ACM certificate for the domain (must be in us-east-1)"
+  type        = string
+  default     = "arn:aws:acm:us-east-1:562693942294:certificate/ca3f2422-060b-4723-abde-caf081335120"
+}
+
+# CloudFront distribution for custom domain
+resource "aws_cloudfront_distribution" "api_distribution" {
+  enabled             = true
+  is_ipv6_enabled     = true
+  comment             = "GeoIP API Distribution"
+  price_class         = "PriceClass_100"  # North America and Europe
+  
+  aliases = [var.custom_domain_name]
+  
+  # Origin pointing to API Gateway
+  origin {
+    domain_name = replace(aws_apigatewayv2_stage.api_stage.invoke_url, "https://", "")
+    origin_id   = "api-gateway-origin"
+    origin_path = ""
+    
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+  
+  # Default cache behavior
+  default_cache_behavior {
+    allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods   = ["GET", "HEAD", "OPTIONS"]
+    target_origin_id = "api-gateway-origin"
+    
+    forwarded_values {
+      query_string = true
+      headers      = ["X-API-Key", "Content-Type", "Authorization"]
+      
+      cookies {
+        forward = "none"
+      }
+    }
+    
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 0
+    max_ttl                = 0
+    compress               = true
+  }
+  
+  # Specific behavior for /auth endpoint
+  ordered_cache_behavior {
+    path_pattern     = "/auth*"
+    allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods   = ["GET", "HEAD", "OPTIONS"]
+    target_origin_id = "api-gateway-origin"
+    
+    forwarded_values {
+      query_string = true
+      headers      = ["*"]  # Forward all headers for API requests
+      
+      cookies {
+        forward = "all"
+      }
+    }
+    
+    viewer_protocol_policy = "https-only"
+    min_ttl                = 0
+    default_ttl            = 0
+    max_ttl                = 0
+  }
+  
+  # SSL certificate configuration
+  viewer_certificate {
+    acm_certificate_arn      = var.acm_certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+  
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+  
+  tags = {
+    Name        = "geoip-api-distribution"
+    Environment = var.environment
+  }
+}
+
+# Additional outputs for CloudFront
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID"
+  value       = aws_cloudfront_distribution.api_distribution.id
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront distribution domain name (for DNS CNAME)"
+  value       = aws_cloudfront_distribution.api_distribution.domain_name
+}
+
+output "custom_domain_url" {
+  description = "Custom domain URL for the API"
+  value       = "https://${var.custom_domain_name}/auth"
+}
+
+output "cloudflare_dns_instructions" {
+  description = "Instructions for Cloudflare DNS configuration"
+  value = <<-EOT
+    
+    ============================================
+    CLOUDFLARE DNS CONFIGURATION:
+    ============================================
+    
+    Add the following DNS record in Cloudflare:
+    
+    Type:   CNAME
+    Name:   geoip
+    Target: ${aws_cloudfront_distribution.api_distribution.domain_name}
+    Proxy:  DNS only (gray cloud) - IMPORTANT!
+    
+    The proxy MUST be disabled (gray cloud) for CloudFront to work.
+    
+    ============================================
+  EOT
+}
