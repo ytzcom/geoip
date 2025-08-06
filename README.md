@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2025--07--28%2000:28:14%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2025--08--04%2000:27:15%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-7-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-3-purple)
