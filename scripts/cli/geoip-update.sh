@@ -41,7 +41,7 @@ set -euo pipefail
 # Default values
 readonly SCRIPT_NAME=$(basename "$0")
 readonly SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-readonly DEFAULT_ENDPOINT="REPLACE_WITH_DEPLOYED_API_GATEWAY_URL/auth"  # e.g., https://xxx.execute-api.region.amazonaws.com/v1/auth
+readonly DEFAULT_ENDPOINT="https://geoip.ytrack.io/auth"
 readonly DEFAULT_TARGET_DIR="./geoip"
 readonly DEFAULT_RETRIES=3
 readonly DEFAULT_TIMEOUT=300

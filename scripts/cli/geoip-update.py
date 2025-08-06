@@ -52,7 +52,7 @@ else:
     msvcrt = None
 
 # Constants
-DEFAULT_ENDPOINT = "REPLACE_WITH_DEPLOYED_API_GATEWAY_URL/auth"  # e.g., https://xxx.execute-api.region.amazonaws.com/v1/auth
+DEFAULT_ENDPOINT = "https://geoip.ytrack.io/auth"
 DEFAULT_TARGET_DIR = "./geoip"
 DEFAULT_RETRIES = 3
 DEFAULT_TIMEOUT = 300

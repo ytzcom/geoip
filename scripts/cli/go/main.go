@@ -22,7 +22,7 @@ import (
 
 const (
 	version           = "1.0.0"
-	defaultEndpoint   = "REPLACE_WITH_DEPLOYED_API_GATEWAY_URL/auth"
+	defaultEndpoint   = "https://geoip.ytrack.io/auth"
 	defaultTargetDir  = "./geoip"
 	defaultRetries    = 3
 	defaultTimeout    = 300

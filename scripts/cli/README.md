@@ -10,7 +10,7 @@ Pre-built Docker images are available on Docker Hub. See [DOCKER_HUB.md](DOCKER_
 # Quick start with Docker
 docker run --rm \
   -e GEOIP_API_KEY=your-api-key \
-  -e GEOIP_API_ENDPOINT=https://your-api.execute-api.region.amazonaws.com/v1/auth \
+  -e GEOIP_API_ENDPOINT=https://geoip.ytrack.io/auth \
   -v $(pwd)/data:/data \
   ytzcom/geoip-updater:latest
 ```
@@ -46,19 +46,15 @@ terraform init
 terraform apply
 ```
 
-### 2. Update API Endpoint
+### 2. Configure Domain (Optional)
 
-After deployment, get the API Gateway URL and update all scripts:
+The scripts are pre-configured to use `https://geoip.ytrack.io/auth` as the default endpoint. If you want to use your own domain:
 
 ```bash
-# Get the API URL from Terraform
-cd infrastructure/terraform
-API_URL=$(terraform output -raw api_gateway_url)
-
-# Update all scripts
-cd ../../scripts/cli
+# Update all scripts with your custom endpoint
+cd scripts/cli
 chmod +x update-api-endpoint.sh
-./update-api-endpoint.sh "$API_URL"
+./update-api-endpoint.sh "https://your-custom-domain.com/auth"
 ```
 
 ### 3. Install Dependencies
