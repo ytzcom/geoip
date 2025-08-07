@@ -1,10 +1,8 @@
-version: '3.8'
-
 # Local development configuration with file serving
 services:
   geoip-api:
     build: .
-    image: geoip-api:latest
+    image: ytzcom/geoip-api:latest
     container_name: geoip-api-local
     restart: unless-stopped
     ports:

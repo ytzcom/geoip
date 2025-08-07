@@ -12,6 +12,8 @@ COMPOSE_FILE="docker-compose.prod.yml"
 DOCKER_IMAGE="${DOCKER_IMAGE:-ytzcom/geoip-api:latest}"
 DOTENV_TOKEN="${DOTENV_TOKEN:-}"
 DOTENV_API_URL="https://dotenv.ca/api/geoip-api/docker/production"
+DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-}"
+DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -43,6 +45,11 @@ if [ -n "$DOTENV_TOKEN" ]; then
     echo "dotenv.ca: Enabled (token provided)"
 else
     echo "dotenv.ca: Disabled (manual .env required)"
+fi
+if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_PASSWORD" ]; then
+    echo "Docker Hub: Credentials provided (will authenticate)"
+else
+    echo "Docker Hub: No credentials (public images only)"
 fi
 echo ""
 
@@ -223,6 +230,16 @@ if [ -f "../docker-deploy-setup.sh" ]; then
     fi
 else
     log_warn "docker-deploy-setup.sh not found, skipping automatic setup"
+fi
+
+# Login to Docker Hub if credentials are provided
+if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_PASSWORD" ]; then
+    log_info "Logging in to Docker Hub..."
+    echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin || {
+        log_warn "Docker Hub login failed, continuing without authentication"
+    }
+else
+    log_info "No Docker Hub credentials provided, attempting to pull without authentication"
 fi
 
 # Pull latest Docker images

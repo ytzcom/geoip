@@ -88,6 +88,8 @@ jobs:
           export REPO_URL="git@github.com:${{ github.repository }}.git"
           export BRANCH="${{ inputs.deploy_branch }}"
           export DOTENV_TOKEN="${{ secrets.DOTENV_TOKEN }}"
+          export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+          export DOCKERHUB_PASSWORD="${{ secrets.DOCKERHUB_PASSWORD }}"
 
           # Handle deployment
           if [ -d "$DEPLOY_DIR" ]; then

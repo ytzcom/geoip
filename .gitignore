@@ -66,3 +66,7 @@ test_data/
 
 # Claude configuration
 .claude/settings.local.json
+
+# Docker API secrets (keep folder, ignore contents)
+infrastructure/docker-api/secrets/*
+!infrastructure/docker-api/secrets/.gitkeep
