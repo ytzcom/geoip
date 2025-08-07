@@ -275,15 +275,15 @@ fi
 
 # Pull latest Docker images
 log_info "Pulling Docker images..."
-docker compose -f "$COMPOSE_FILE" pull || {
+docker compose -f "$COMPOSE_FILE" --env-file secrets/.env pull || {
     log_error "Failed to pull Docker images"
     exit 1
 }
 
 # Stop existing containers (if any)
-if docker compose -f "$COMPOSE_FILE" ps -q | grep -q .; then
+if docker compose -f "$COMPOSE_FILE" --env-file secrets/.env ps -q | grep -q .; then
     log_info "Stopping existing containers..."
-    docker compose -f "$COMPOSE_FILE" down
+    docker compose -f "$COMPOSE_FILE" --env-file secrets/.env down
 fi
 
 # Start containers
@@ -299,7 +299,7 @@ sleep 10
 
 # Check container status
 log_info "Checking container status..."
-docker compose -f "$COMPOSE_FILE" ps
+docker compose -f "$COMPOSE_FILE" --env-file secrets/.env ps
 
 # Health check
 log_info "Performing health check..."
@@ -322,7 +322,7 @@ if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
     log_error "Health check failed after $MAX_ATTEMPTS attempts"
     echo ""
     echo "Debug information:"
-    docker compose -f "$COMPOSE_FILE" logs --tail=50
+    docker compose -f "$COMPOSE_FILE" --env-file secrets/.env logs --tail=50
     exit 1
 fi
 
@@ -353,10 +353,10 @@ echo "✅ Deployment completed successfully!"
 echo ""
 echo "🌐 Application URL: ${ENVIRONMENT_URL:-https://geoip.ytrack.io}"
 echo "📊 Container status:"
-docker compose -f "$COMPOSE_FILE" ps
+docker compose -f "$COMPOSE_FILE" --env-file secrets/.env ps
 echo ""
 echo "📝 View logs with:"
-echo "  docker compose -f $COMPOSE_FILE logs -f"
+echo "  docker compose -f $COMPOSE_FILE --env-file secrets/.env logs -f"
 echo ""
 echo "🔑 API endpoints:"
 echo "  Health: ${ENVIRONMENT_URL:-https://geoip.ytrack.io}/health"

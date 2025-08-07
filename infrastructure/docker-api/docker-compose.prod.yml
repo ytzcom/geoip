@@ -1,7 +1,7 @@
 # Production configuration with S3 backend and reverse proxy
 services:
   geoip-api:
-    image: ytzcom/geoip-api-nginx:latest
+    image: ytzcom/geoip-api:latest
     container_name: geoip-api
     restart: always
     expose:
