@@ -260,15 +260,3 @@ geoip_health_check() {
         return 1
     fi
 }
-
-# Export functions for use by sourcing scripts
-export -f geoip_init
-export -f geoip_check_databases
-export -f geoip_download_databases
-export -f geoip_validate_databases
-export -f geoip_setup_cron
-export -f geoip_health_check
-export -f geoip_log_info
-export -f geoip_log_error
-export -f geoip_log_warning
-export -f geoip_log_success
