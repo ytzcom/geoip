@@ -110,6 +110,21 @@ if [ ! -d "infrastructure/docker-api/secrets" ]; then
     mkdir -p infrastructure/docker-api/secrets
 fi
 
+# Detect the appropriate user/group for file ownership
+# Get the owner of the DEPLOY_DIR to maintain consistent permissions
+if [ -d "$DEPLOY_DIR" ]; then
+    DIR_OWNER=$(stat -c '%u' "$DEPLOY_DIR" 2>/dev/null || stat -f '%u' "$DEPLOY_DIR" 2>/dev/null)
+    DIR_GROUP=$(stat -c '%g' "$DEPLOY_DIR" 2>/dev/null || stat -f '%g' "$DEPLOY_DIR" 2>/dev/null)
+    
+    if [ -n "$DIR_OWNER" ] && [ -n "$DIR_GROUP" ]; then
+        log_info "Using directory owner for file permissions: UID=$DIR_OWNER GID=$DIR_GROUP"
+    else
+        log_warn "Could not detect directory owner, files will use current user permissions"
+        DIR_OWNER=""
+        DIR_GROUP=""
+    fi
+fi
+
 # Handle .env file
 cd infrastructure/docker-api
 
@@ -120,6 +135,10 @@ if [ -n "$DOTENV_TOKEN" ]; then
     # Save the token for future use
     echo "$DOTENV_TOKEN" > secrets/dotenv-token.txt
     chmod 600 secrets/dotenv-token.txt
+    # Fix ownership if we detected the correct user/group
+    if [ -n "$DIR_OWNER" ] && [ -n "$DIR_GROUP" ]; then
+        chown "$DIR_OWNER:$DIR_GROUP" secrets/dotenv-token.txt 2>/dev/null || true
+    fi
     log_info "Saved DOTENV_TOKEN to secrets/dotenv-token.txt for future use"
     
     # Backup existing .env if it exists
@@ -141,6 +160,10 @@ if [ -n "$DOTENV_TOKEN" ]; then
                 # File looks valid, use it
                 mv secrets/.env.tmp secrets/.env
                 chmod 600 secrets/.env
+                # Fix ownership if we detected the correct user/group
+                if [ -n "$DIR_OWNER" ] && [ -n "$DIR_GROUP" ]; then
+                    chown "$DIR_OWNER:$DIR_GROUP" secrets/.env 2>/dev/null || true
+                fi
                 log_info ".env file fetched successfully from dotenv.ca"
                 log_info "File size: $(wc -c < secrets/.env) bytes"
             else
@@ -151,6 +174,10 @@ if [ -n "$DOTENV_TOKEN" ]; then
                 # Restore backup if it exists
                 if [ -f "secrets/.env.backup" ]; then
                     mv secrets/.env.backup secrets/.env
+                    # Fix ownership if we detected the correct user/group
+                    if [ -n "$DIR_OWNER" ] && [ -n "$DIR_GROUP" ]; then
+                        chown "$DIR_OWNER:$DIR_GROUP" secrets/.env 2>/dev/null || true
+                    fi
                     log_warn "Restored previous .env from backup"
                 else
                     log_error "No backup available, manual intervention required"
@@ -165,6 +192,10 @@ if [ -n "$DOTENV_TOKEN" ]; then
             # Restore backup if it exists
             if [ -f "secrets/.env.backup" ]; then
                 mv secrets/.env.backup secrets/.env
+                # Fix ownership if we detected the correct user/group
+                if [ -n "$DIR_OWNER" ] && [ -n "$DIR_GROUP" ]; then
+                    chown "$DIR_OWNER:$DIR_GROUP" secrets/.env 2>/dev/null || true
+                fi
                 log_warn "Restored previous .env from backup"
             else
                 log_error "No backup available, manual intervention required"
