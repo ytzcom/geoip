@@ -411,15 +411,37 @@ func (g *GeoIPUpdater) validateMMDB(path string) error {
 	}
 	defer file.Close()
 
-	// Read first 4KB to check for MMDB marker
-	buf := make([]byte, 4096)
+	// Get file size
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := stat.Size()
+
+	// MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
+	// Read the last 100KB to find the metadata section
+	readSize := int64(100000)
+	if size < readSize {
+		readSize = size
+	}
+
+	// Seek to the position to start reading
+	_, err = file.Seek(size-readSize, 0)
+	if err != nil {
+		return err
+	}
+
+	// Read the last portion of the file
+	buf := make([]byte, readSize)
 	n, err := file.Read(buf)
 	if err != nil && err != io.EOF {
 		return err
 	}
 
-	if !bytes.Contains(buf[:n], []byte("MMDB")) {
-		return fmt.Errorf("missing MMDB marker")
+	// Look for the MMDB metadata marker
+	marker := []byte("\xab\xcd\xefMaxMind.com")
+	if !bytes.Contains(buf[:n], marker) {
+		return fmt.Errorf("missing MaxMind metadata marker")
 	}
 
 	return nil

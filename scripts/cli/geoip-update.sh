@@ -438,9 +438,10 @@ download_database() {
             
             # Basic file validation
             if [[ "$db_name" == *.mmdb ]]; then
-                # Check if it's a valid MMDB file by looking for MMDB marker
-                if ! grep -q "MMDB" "$temp_file" 2>/dev/null; then
-                    log WARN "MMDB file $db_name may be invalid: missing MMDB marker"
+                # Check if it's a valid MMDB file by looking for MaxMind metadata marker at the end
+                # MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
+                if ! tail -c 100000 "$temp_file" 2>/dev/null | grep -a -q $'\xab\xcd\xef'MaxMind.com 2>/dev/null; then
+                    log WARN "MMDB file $db_name may be invalid: missing MaxMind metadata marker"
                 fi
             elif [[ "$db_name" == *.BIN ]]; then
                 # Basic check for BIN files
