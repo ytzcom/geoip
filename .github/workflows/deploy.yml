@@ -29,7 +29,7 @@ on:
         description: 'Environment URL'
         required: false
         type: string
-        default: 'https://geoip.ytrack.io'
+        default: 'https://geoipdb.net'
     secrets:
       DEPLOY_KEY:
         required: true

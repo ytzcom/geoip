@@ -26,7 +26,7 @@ Examples:
 
 Environment Variables:
     GEOIP_API_KEY       API key for authentication
-    GEOIP_API_ENDPOINT  API endpoint URL (default: https://geoip.ytrack.io/auth)
+    GEOIP_API_ENDPOINT  API endpoint URL (default: https://geoipdb.net/auth)
     GEOIP_TARGET_DIR    Default target directory
 """
 
@@ -66,7 +66,7 @@ else:
     msvcrt = None
 
 # Constants
-DEFAULT_ENDPOINT = "https://geoip.ytrack.io/auth"
+DEFAULT_ENDPOINT = "https://geoipdb.net/auth"
 DEFAULT_TARGET_DIR = "./geoip"
 DEFAULT_RETRIES = 3
 DEFAULT_TIMEOUT = 300

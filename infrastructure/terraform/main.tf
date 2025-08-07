@@ -219,7 +219,7 @@ output "setup_instructions" {
 variable "custom_domain_name" {
   description = "Custom domain name for the API"
   type        = string
-  default     = "geoip.ytrack.io"
+  default     = "geoipdb.net"
 }
 
 variable "acm_certificate_arn" {
