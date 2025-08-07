@@ -53,16 +53,54 @@ echo "   Created ssl/ directory for certificates"
 mkdir -p nginx-cache
 echo "   Created nginx-cache/ directory"
 
-# Set ownership for Docker user (typically UID 1000 for non-root containers)
+# Set ownership for the appropriate user
 # Only do this if we have permission (running as root)
 if [ "$EUID" -eq 0 ]; then
     echo "👤 Setting ownership for container user..."
-    chown -R 1000:1000 secrets ssl nginx-cache
+    
+    # Detect the owner of the parent directory (should be the deployment user)
+    PARENT_DIR="$(dirname "$(pwd)")"
+    if [ -d "$PARENT_DIR" ]; then
+        # Use stat to get numeric UID/GID, compatible with both Linux and macOS
+        DIR_OWNER=$(stat -c '%u' "$PARENT_DIR" 2>/dev/null || stat -f '%u' "$PARENT_DIR" 2>/dev/null)
+        DIR_GROUP=$(stat -c '%g' "$PARENT_DIR" 2>/dev/null || stat -f '%g' "$PARENT_DIR" 2>/dev/null)
+    fi
+    
+    # If we couldn't detect from parent, try current directory
+    if [ -z "$DIR_OWNER" ] || [ -z "$DIR_GROUP" ]; then
+        DIR_OWNER=$(stat -c '%u' "." 2>/dev/null || stat -f '%u' "." 2>/dev/null)
+        DIR_GROUP=$(stat -c '%g' "." 2>/dev/null || stat -f '%g' "." 2>/dev/null)
+    fi
+    
+    # If still no detection, check for SUDO_USER
+    if [ -z "$DIR_OWNER" ] || [ -z "$DIR_GROUP" ]; then
+        if [ -n "$SUDO_USER" ]; then
+            DIR_OWNER=$(id -u "$SUDO_USER")
+            DIR_GROUP=$(id -g "$SUDO_USER")
+            echo "   Using SUDO_USER ($SUDO_USER) for ownership: $DIR_OWNER:$DIR_GROUP"
+        else
+            # Default fallback - don't use hardcoded 1000
+            echo "⚠️  Could not detect appropriate user/group"
+            echo "   Skipping ownership changes to avoid permission issues"
+            DIR_OWNER=""
+            DIR_GROUP=""
+        fi
+    else
+        echo "   Detected directory owner: UID=$DIR_OWNER GID=$DIR_GROUP"
+    fi
+    
+    # Set ownership if we have valid user/group
+    if [ -n "$DIR_OWNER" ] && [ -n "$DIR_GROUP" ]; then
+        chown -R "$DIR_OWNER:$DIR_GROUP" secrets ssl nginx-cache
+        echo "✅ Set ownership to $DIR_OWNER:$DIR_GROUP"
+    fi
     
     # Set permissions
     echo "🔧 Setting directory permissions..."
     chmod 755 secrets ssl nginx-cache
-    chmod 600 secrets/.env
+    if [ -f secrets/.env ]; then
+        chmod 600 secrets/.env
+    fi
 else
     echo "⚠️  Not running as root, skipping ownership changes"
     echo "   Containers will use current user permissions"
