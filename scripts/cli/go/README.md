@@ -20,7 +20,7 @@ Download the appropriate binary for your platform from the releases page, or bui
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/geoip-updater.git
+git clone https://github.com/ytzcom/geoip.git
 cd geoip-updater/scripts/cli/go
 
 # Build for current platform
