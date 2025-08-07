@@ -8,5 +8,5 @@ s3_bucket_name = "your-geoip-bucket"
 aws_region = "us-east-1"
 
 # Custom domain configuration
-custom_domain_name = "geoip.ytrack.io"
-acm_certificate_arn = "arn:aws:acm:us-east-1:REDACTED:certificate/ca3f2422-060b-4723-abde-caf081335120"
+custom_domain_name = "geoipdb.net"
+acm_certificate_arn = "arn:aws:acm:us-east-1:REDACTED:certificate/REDACTED"

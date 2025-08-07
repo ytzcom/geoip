@@ -17,7 +17,7 @@ set -e
 # Configuration
 GEOIP_UPDATE_SCHEDULE="${GEOIP_UPDATE_SCHEDULE:-0 2 * * *}"
 GEOIP_API_KEY="${GEOIP_API_KEY}"
-GEOIP_API_ENDPOINT="${GEOIP_API_ENDPOINT:-https://geoip.ytrack.io/auth}"
+GEOIP_API_ENDPOINT="${GEOIP_API_ENDPOINT:-https://geoipdb.net/auth}"
 GEOIP_TARGET_DIR="${GEOIP_TARGET_DIR:-/app/resources/geoip}"
 CRON_LOG_FILE="${GEOIP_LOG_FILE:-/var/log/geoip-update.log}"
 GEOIP_DATABASES="${GEOIP_DATABASES:-all}"

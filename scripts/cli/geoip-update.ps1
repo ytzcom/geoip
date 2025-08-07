@@ -65,7 +65,7 @@ param(
     [string]$ApiKey = $env:GEOIP_API_KEY,
     
     [Parameter()]
-    [string]$ApiEndpoint = $(if ($env:GEOIP_API_ENDPOINT) { $env:GEOIP_API_ENDPOINT } else { "https://geoip.ytrack.io/auth" }),
+    [string]$ApiEndpoint = $(if ($env:GEOIP_API_ENDPOINT) { $env:GEOIP_API_ENDPOINT } else { "https://geoipdb.net/auth" }),
     
     [Parameter()]
     [string]$TargetDirectory = $(if ($env:GEOIP_TARGET_DIR) { $env:GEOIP_TARGET_DIR } else { ".\geoip" }),
@@ -281,7 +281,7 @@ function Test-Configuration {
     if ($ApiEndpoint -match '^http://localhost|^http://127\.0\.0\.1') {
         Write-LogMessage -Level INFO -Message "Using local API endpoint: $ApiEndpoint"
     }
-    elseif ($ApiEndpoint -eq "https://geoip.ytrack.io/auth") {
+    elseif ($ApiEndpoint -eq "https://geoipdb.net/auth") {
         Write-LogMessage -Level INFO -Message "Using production API endpoint: $ApiEndpoint"
     }
     else {

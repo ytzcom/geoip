@@ -33,10 +33,10 @@ Then in your entrypoint:
 
 ```bash
 # Install GeoIP tools to /opt/geoip
-curl -sSL https://geoip.ytrack.io/install | sh
+curl -sSL https://geoipdb.net/install | sh
 
 # With automatic updates via cron
-curl -sSL "https://geoip.ytrack.io/install?with_cron=true" | sh
+curl -sSL "https://geoipdb.net/install?with_cron=true" | sh
 ```
 
 ### Docker CLI (Direct Download)
@@ -45,7 +45,7 @@ curl -sSL "https://geoip.ytrack.io/install?with_cron=true" | sh
 # One-time download with Docker
 docker run --rm \
   -e GEOIP_API_KEY=your-api-key \
-  -e GEOIP_API_ENDPOINT=https://geoip.ytrack.io/auth \
+  -e GEOIP_API_ENDPOINT=https://geoipdb.net/auth \
   -v $(pwd)/data:/data \
   ytzcom/geoip-updater:latest
 
@@ -156,7 +156,7 @@ go build -o geoip-updater
 # With all options
 ./geoip-updater \
   -api-key YOUR_API_KEY \
-  -api-endpoint https://geoip.ytrack.io/auth \
+  -api-endpoint https://geoipdb.net/auth \
   -target-dir /var/lib/geoip \
   -databases "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
 ```
@@ -259,7 +259,7 @@ sudo journalctl -u geoip-update.service
 # Edit secret with your API key
 kubectl create secret generic geoip-api-credentials \
   --from-literal=api-key=YOUR_API_KEY \
-  --from-literal=api-endpoint=https://geoip.ytrack.io/auth
+  --from-literal=api-endpoint=https://geoipdb.net/auth
 
 # Deploy CronJob
 kubectl apply -k scripts/cli/k8s/
@@ -384,13 +384,13 @@ One-line installation for any Linux system:
 
 ```bash
 # Basic installation
-curl -sSL https://geoip.ytrack.io/install | sh
+curl -sSL https://geoipdb.net/install | sh
 
 # With cron for automatic updates
-curl -sSL "https://geoip.ytrack.io/install?with_cron=true" | sh
+curl -sSL "https://geoipdb.net/install?with_cron=true" | sh
 
 # Custom installation directory
-curl -sSL "https://geoip.ytrack.io/install?install_dir=/usr/local/geoip" | sh
+curl -sSL "https://geoipdb.net/install?install_dir=/usr/local/geoip" | sh
 ```
 
 After installation:
@@ -411,7 +411,7 @@ export GEOIP_API_KEY=your-api-key
 |----------|-------------|---------|
 | `GEOIP_API_KEY` | **Required** - Your API key | - |
 | `GEOIP_TARGET_DIR` | Where to store databases | `/app/resources/geoip` |
-| `GEOIP_API_ENDPOINT` | API endpoint URL | `https://geoip.ytrack.io/auth` |
+| `GEOIP_API_ENDPOINT` | API endpoint URL | `https://geoipdb.net/auth` |
 | `GEOIP_DOWNLOAD_ON_START` | Download on container start | `true` |
 | `GEOIP_VALIDATE_ON_START` | Validate on start | `true` |
 | `GEOIP_SETUP_CRON` | Setup automatic updates | `true` |
@@ -677,13 +677,13 @@ pip install geoip2 IP2Location IP2Proxy
 ```bash
 # For CLI scripts
 export GEOIP_API_KEY="your_api_key"
-export GEOIP_API_ENDPOINT="https://geoip.ytrack.io/auth"
+export GEOIP_API_ENDPOINT="https://geoipdb.net/auth"
 export GEOIP_TARGET_DIR="/var/lib/geoip"
 
 # For Docker
 docker run --rm \
   -e GEOIP_API_KEY=your-api-key \
-  -e GEOIP_API_ENDPOINT=https://geoip.ytrack.io/auth \
+  -e GEOIP_API_ENDPOINT=https://geoipdb.net/auth \
   -v $(pwd)/data:/data \
   ytzcom/geoip-updater:latest
 ```
@@ -693,7 +693,7 @@ docker run --rm \
 Create `config.yaml`:
 ```yaml
 api_key: "your_api_key_here"
-api_endpoint: "https://geoip.ytrack.io/auth"
+api_endpoint: "https://geoipdb.net/auth"
 target_dir: "/var/lib/geoip"
 databases:
   - "GeoIP2-City.mmdb"
@@ -718,7 +718,7 @@ All download methods require an API key. The authentication flow:
 
 Example API call:
 ```bash
-curl -X POST https://geoip.ytrack.io/auth \
+curl -X POST https://geoipdb.net/auth \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"databases": "all"}'

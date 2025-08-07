@@ -14,7 +14,7 @@ Choose your deployment method based on your infrastructure:
 - **Clean, maintainable code** (~50 lines)
 - **Single Terraform configuration**
 - **One-command deployment**
-- **Custom domain support** via CloudFront (geoip.ytrack.io)
+- **Custom domain support** via CloudFront (geoipdb.net)
 - **Perfect for AWS environments**
 
 ### Option 2: Docker API (Container)
@@ -133,14 +133,14 @@ aws lambda update-function-configuration \
 
 ### Request Flow
 ```
-Client Request → CloudFront (geoip.ytrack.io) → API Gateway → Lambda → Validate Key → Generate S3 URLs
+Client Request → CloudFront (geoipdb.net) → API Gateway → Lambda → Validate Key → Generate S3 URLs
                                                                 ↑
                                                          Environment Variables
                                                           (API Keys stored here)
 ```
 
 ### Components
-- **CloudFront**: Custom domain distribution (geoip.ytrack.io)
+- **CloudFront**: Custom domain distribution (geoipdb.net)
 - **Lambda Function**: Simple Python function (50 lines)
 - **API Gateway**: HTTP API with CORS
 - **S3 Bucket**: Your existing GeoIP files
@@ -189,7 +189,7 @@ aws_region = "us-east-1"       # Optional, defaults to us-east-1
 ## 🌐 Custom Domain Setup
 
 ### CloudFront Configuration
-The API is accessible via CloudFront at `https://geoip.ytrack.io/auth`.
+The API is accessible via CloudFront at `https://geoipdb.net/auth`.
 
 After deployment, configure DNS in Cloudflare:
 
@@ -213,7 +213,7 @@ After deployment, configure DNS in Cloudflare:
 
 ### Request
 ```bash
-curl -X POST https://geoip.ytrack.io/auth \
+curl -X POST https://geoipdb.net/auth \
   -H 'X-API-Key: your-api-key' \
   -H 'Content-Type: application/json' \
   -d '{"databases": "all"}'

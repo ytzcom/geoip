@@ -10,7 +10,7 @@ Pre-built Docker images are available on Docker Hub. See [DOCKER_HUB.md](DOCKER_
 # Quick start with Docker
 docker run --rm \
   -e GEOIP_API_KEY=your-api-key \
-  -e GEOIP_API_ENDPOINT=https://geoip.ytrack.io/auth \
+  -e GEOIP_API_ENDPOINT=https://geoipdb.net/auth \
   -v $(pwd)/data:/data \
   ytzcom/geoip-updater:latest
 ```
@@ -48,7 +48,7 @@ terraform apply
 
 ### 2. Configure Domain (Optional)
 
-The scripts are pre-configured to use `https://geoip.ytrack.io/auth` as the default endpoint. If you want to use your own domain:
+The scripts are pre-configured to use `https://geoipdb.net/auth` as the default endpoint. If you want to use your own domain:
 
 ```bash
 # Update all scripts with your custom endpoint

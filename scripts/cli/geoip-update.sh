@@ -50,7 +50,7 @@ set -euo pipefail
 # Default values
 readonly SCRIPT_NAME=$(basename "$0")
 readonly SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-readonly DEFAULT_ENDPOINT="https://geoip.ytrack.io/auth"
+readonly DEFAULT_ENDPOINT="https://geoipdb.net/auth"
 readonly DEFAULT_TARGET_DIR="./geoip"
 readonly DEFAULT_RETRIES=3
 readonly DEFAULT_TIMEOUT=300

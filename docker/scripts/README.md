@@ -109,7 +109,7 @@ When you source `entrypoint-helper.sh`, these functions become available:
 
 - **`GEOIP_ENABLED`** - Enable/disable GeoIP functionality (default: `true`)
 - **`GEOIP_TARGET_DIR`** - Where to store databases (default: `/app/resources/geoip`)
-- **`GEOIP_API_ENDPOINT`** - API endpoint URL (default: `https://geoip.ytrack.io/auth`)
+- **`GEOIP_API_ENDPOINT`** - API endpoint URL (default: `https://geoipdb.net/auth`)
 - **`GEOIP_DOWNLOAD_ON_START`** - Download on container start (default: `true`)
 - **`GEOIP_VALIDATE_ON_START`** - Validate on start (default: `true`)
 - **`GEOIP_SETUP_CRON`** - Setup automatic updates (default: `true`)
