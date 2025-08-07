@@ -6,7 +6,7 @@ set -e
 
 # Configuration
 DEPLOY_DIR="${DEPLOY_DIR:-/data/sites/live_projects/geoip-api}"
-REPO_URL="${REPO_URL:-https://github.com/ytzcom/geoip-updater.git}"
+REPO_URL="${REPO_URL:-git@github.com:ytzcom/geoip.git}"
 BRANCH="${BRANCH:-main}"
 COMPOSE_FILE="docker-compose.prod.yml"
 DOCKER_IMAGE="${DOCKER_IMAGE:-ytzcom/geoip-api:latest}"

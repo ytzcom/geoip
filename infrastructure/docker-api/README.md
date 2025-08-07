@@ -235,7 +235,7 @@ Downloads the database file directly.
 ssh user@your-server.com
 
 # Clone the repository
-git clone https://github.com/yourusername/geoip-updater.git
+git clone https://github.com/ytzcom/geoip.git
 cd geoip-updater/infrastructure/docker-api
 
 # Configure environment
