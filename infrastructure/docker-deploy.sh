@@ -8,7 +8,7 @@ set -e
 DEPLOY_DIR="${DEPLOY_DIR:-/data/sites/live_projects/geoip-api}"
 REPO_URL="${REPO_URL:-https://github.com/ytzcom/geoip-updater.git}"
 BRANCH="${BRANCH:-main}"
-COMPOSE_FILE="infrastructure/docker-api/docker-compose.prod.yml"
+COMPOSE_FILE="docker-compose.prod.yml"
 DOCKER_IMAGE="${DOCKER_IMAGE:-ytzcom/geoip-api:latest}"
 DOTENV_TOKEN="${DOTENV_TOKEN:-}"
 DOTENV_API_URL="https://dotenv.ca/api/geoip-api/docker/production"
