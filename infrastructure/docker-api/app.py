@@ -448,7 +448,7 @@ fi
 
 # Extract scripts from Docker image
 echo "Extracting scripts from ytzcom/geoip-scripts:latest..."
-if ! "$CRANE_CMD" export ytzcom/geoip-scripts:latest - | tar -x -C "$INSTALL_DIR" 2>/dev/null; then
+if ! "$CRANE_CMD" export ytzcom/geoip-scripts:latest - | tar -x --strip-components=2 -C "$INSTALL_DIR" 2>/dev/null; then
     echo "ERROR: Failed to extract scripts from Docker image"
     echo "This might be because:"
     echo "  1. The Docker image doesn't exist yet"
