@@ -94,8 +94,9 @@ $ErrorActionPreference = 'Stop'
 
 # Script configuration
 $script:ScriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
-$script:LockFile = Join-Path $env:TEMP "geoip-update.lock"
-$script:TempDirectory = Join-Path $env:TEMP "geoip-update-$(Get-Random)"
+$script:TempPath = if ($env:TEMP) { $env:TEMP } elseif ($env:TMPDIR) { $env:TMPDIR } elseif ($env:TMP) { $env:TMP } else { "/tmp" }
+$script:LockFile = Join-Path $script:TempPath "geoip-update.lock"
+$script:TempDirectory = Join-Path $script:TempPath "geoip-update-$(Get-Random)"
 $script:DownloadJobs = @()
 $script:ExitCode = 0
 
@@ -506,21 +507,47 @@ function Start-DatabaseDownloadWithProgress {
             
             # Basic validation
             if ($DatabaseName -like "*.mmdb") {
-                # Check for MMDB marker
+                # Check for MaxMind metadata marker at the end of the file
+                # MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
                 try {
                     # PowerShell 5.1 and PowerShell Core compatible approach
-                    $bytes = [System.IO.File]::ReadAllBytes($tempFile)
-                    $headerSize = [Math]::Min($bytes.Length, 4096)
-                    $headerBytes = New-Object byte[] $headerSize
-                    [System.Array]::Copy($bytes, 0, $headerBytes, 0, $headerSize)
+                    $fileInfo = Get-Item -Path $tempFile
+                    $fileSize = $fileInfo.Length
+                    $readSize = [Math]::Min($fileSize, 100000)  # Read last 100KB
                     
-                    $headerString = [System.Text.Encoding]::ASCII.GetString($headerBytes)
-                    if ($headerString -notmatch "MMDB") {
-                        Write-LogMessage -Level WARN -Message "MMDB file $DatabaseName may be invalid: missing MMDB marker"
+                    # Open file and seek to the position to start reading
+                    $fileStream = [System.IO.File]::OpenRead($tempFile)
+                    $fileStream.Seek($fileSize - $readSize, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    
+                    # Read the last portion of the file
+                    $buffer = New-Object byte[] $readSize
+                    $bytesRead = $fileStream.Read($buffer, 0, $readSize)
+                    $fileStream.Close()
+                    
+                    # Look for the MMDB metadata marker: \xab\xcd\xef followed by MaxMind.com
+                    $marker = [byte[]]@(0xab, 0xcd, 0xef) + [System.Text.Encoding]::ASCII.GetBytes("MaxMind.com")
+                    $found = $false
+                    
+                    for ($i = 0; $i -le $bytesRead - $marker.Length; $i++) {
+                        $match = $true
+                        for ($j = 0; $j -lt $marker.Length; $j++) {
+                            if ($buffer[$i + $j] -ne $marker[$j]) {
+                                $match = $false
+                                break
+                            }
+                        }
+                        if ($match) {
+                            $found = $true
+                            break
+                        }
+                    }
+                    
+                    if (-not $found) {
+                        Write-LogMessage -Level WARN -Message "MMDB file $DatabaseName may be invalid: missing MaxMind metadata marker"
                     }
                 }
                 catch {
-                    Write-LogMessage -Level WARN -Message "Failed to validate MMDB file $DatabaseName: $_"
+                    Write-LogMessage -Level WARN -Message "Failed to validate MMDB file ${DatabaseName}: $_"
                 }
             }
             elseif ($DatabaseName -like "*.BIN") {
@@ -623,9 +650,12 @@ function Update-Databases {
         'X-API-Key' = $ApiKey
     }
     
-    $body = @{
-        databases = if ($Databases -contains 'all') { 'all' } else { $Databases }
-    } | ConvertTo-Json
+    if ($Databases -contains 'all') {
+        $body = @{ databases = 'all' } | ConvertTo-Json
+    } else {
+        # Force array in JSON even for single item
+        $body = @{ databases = @($Databases) } | ConvertTo-Json -Depth 10
+    }
     
     # Get pre-signed URLs from API
     Write-LogMessage -Level INFO -Message "Authenticating with API endpoint"
@@ -643,7 +673,7 @@ function Update-Databases {
     }
     
     # Count total databases
-    $totalCount = $urls.PSObject.Properties.Count
+    $totalCount = [int]($urls.PSObject.Properties.Count)
     Write-LogMessage -Level INFO -Message "Received URLs for $totalCount databases"
     
     # Check if we should use progress bars (when not in quiet mode and reasonable number of databases)
@@ -716,24 +746,25 @@ function Update-Databases {
             $job = Start-DatabaseDownload -DatabaseName $dbName -Url $url
             $jobs += $job
         }
-    
-    # Wait for remaining jobs
-    while ($jobs.Count -gt 0) {
-        Start-Sleep -Milliseconds 100
         
-        $completed = $jobs | Where-Object { $_.State -ne 'Running' }
-        foreach ($job in $completed) {
-            $result = Receive-Job -Job $job
-            Remove-Job -Job $job
-            $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }
+        # Wait for remaining jobs
+        while ($jobs.Count -gt 0) {
+            Start-Sleep -Milliseconds 100
             
-            if ($result.Success) {
-                Write-LogMessage -Level SUCCESS -Message "Successfully downloaded: $($result.Database) ($($result.Size) bytes)"
-                $completedCount++
-            }
-            else {
-                Write-LogMessage -Level ERROR -Message "Failed to download $($result.Database): $($result.Error)"
-                $failedCount++
+            $completed = $jobs | Where-Object { $_.State -ne 'Running' }
+            foreach ($job in $completed) {
+                $result = Receive-Job -Job $job
+                Remove-Job -Job $job
+                $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }
+                
+                if ($result.Success) {
+                    Write-LogMessage -Level SUCCESS -Message "Successfully downloaded: $($result.Database) ($($result.Size) bytes)"
+                    $completedCount++
+                }
+                else {
+                    Write-LogMessage -Level ERROR -Message "Failed to download $($result.Database): $($result.Error)"
+                    $failedCount++
+                }
             }
         }
     }

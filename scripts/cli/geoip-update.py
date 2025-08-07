@@ -49,6 +49,25 @@ from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
+# Optional imports for database validation
+try:
+    import geoip2.database
+    HAS_GEOIP2 = True
+except ImportError:
+    HAS_GEOIP2 = False
+
+try:
+    from IP2Location import IP2Location
+    HAS_IP2LOCATION = True
+except ImportError:
+    HAS_IP2LOCATION = False
+
+try:
+    from IP2Proxy import IP2Proxy
+    HAS_IP2PROXY = True
+except ImportError:
+    HAS_IP2PROXY = False
+
 __all__ = ['Config', 'LockFile', 'GeoIPUpdater', 'main']
 
 try:
@@ -340,16 +359,62 @@ class GeoIPUpdater:
                     if len(header) < 16:
                         logger.error(f"Invalid MMDB file {db_name}: too small")
                         return False
-                    # MMDB files contain "MMDB" marker
-                    f.seek(0)
-                    content = f.read(min(size, 4096))
-                    if b'MMDB' not in content:
-                        logger.warning(f"MMDB file {db_name} may be invalid: missing MMDB marker")
+                    # MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
+                    # Read the last 100KB to find the metadata section
+                    read_size = min(size, 100000)
+                    f.seek(max(0, size - read_size))
+                    content = f.read(read_size)
+                    if b'\xab\xcd\xefMaxMind.com' not in content:
+                        logger.warning(f"MMDB file {db_name} may be invalid: missing MaxMind metadata marker")
                 
                 elif db_name.endswith('.BIN'):
                     # IP2Location binary files have specific structure
                     if len(header) < 4:
                         logger.error(f"Invalid BIN file {db_name}: too small")
+                        return False
+                    
+                    # Try to validate with IP2Location/IP2Proxy libraries if available
+                    if 'PROXY' in db_name.upper() or 'PX' in db_name.upper():
+                        if HAS_IP2PROXY:
+                            try:
+                                db = IP2Proxy(str(file_path))
+                                # Try a simple query to validate
+                                result = db.get_all('8.8.8.8')
+                                logger.debug(f"IP2Proxy validation successful for {db_name}")
+                            except Exception as e:
+                                logger.warning(f"IP2Proxy validation failed for {db_name}: {e}")
+                                return False
+                    elif HAS_IP2LOCATION:
+                        try:
+                            db = IP2Location(str(file_path))
+                            # Try a simple query to validate
+                            result = db.get_all('8.8.8.8')
+                            logger.debug(f"IP2Location validation successful for {db_name}")
+                        except Exception as e:
+                            logger.warning(f"IP2Location validation failed for {db_name}: {e}")
+                            return False
+                
+                # Additional validation: Try to open with geoip2 if it's an MMDB file
+                if db_name.endswith('.mmdb') and HAS_GEOIP2:
+                    try:
+                        reader = geoip2.database.Reader(str(file_path))
+                        # Try a simple lookup to ensure it works
+                        try:
+                            if 'City' in db_name:
+                                reader.city('8.8.8.8')
+                            elif 'Country' in db_name:
+                                reader.country('8.8.8.8')
+                            elif 'ISP' in db_name:
+                                reader.isp('8.8.8.8')
+                            else:
+                                # Generic test
+                                reader.country('8.8.8.8')
+                        except:
+                            pass  # Some lookups may fail for certain IPs, but file is valid
+                        reader.close()
+                        logger.debug(f"GeoIP2 validation successful for {db_name}")
+                    except Exception as e:
+                        logger.warning(f"GeoIP2 validation failed for {db_name}: {e}")
                         return False
             
             return True
