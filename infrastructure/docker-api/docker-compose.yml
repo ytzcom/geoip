@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   geoip-api:
     build: .
-    image: geoip-api:latest
+    image: ytzcom/geoip-api:latest
     container_name: geoip-api
     restart: unless-stopped
     ports:
