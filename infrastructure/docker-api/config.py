@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # Storage Configuration
     storage_mode: str = Field(
         default="s3",
+        alias="STORAGE_MODE",
         description="Storage mode: s3, local, or hybrid"
     )
     
@@ -88,6 +89,40 @@ class Settings(BaseSettings):
     log_level: str = Field(
         default="INFO",
         description="Logging level"
+    )
+    
+    # Query and Caching Configuration
+    cache_type: str = Field(
+        default="memory",
+        description="Cache type: memory, redis, sqlite, or none"
+    )
+    redis_url: Optional[str] = Field(
+        default=None,
+        description="Redis connection URL for caching"
+    )
+    cache_ttl: Optional[int] = Field(
+        default=None,
+        description="Cache TTL in seconds (default: until next Monday 4am)"
+    )
+    query_rate_limit: int = Field(
+        default=50,
+        description="Maximum number of IPs per query"
+    )
+    
+    # Session Configuration
+    session_secret_key: str = Field(
+        default="change-me-in-production",
+        description="Secret key for signing session cookies"
+    )
+    
+    # Database Update Configuration
+    database_update_schedule: str = Field(
+        default="0 4 * * 1",
+        description="Cron schedule for database updates (default: Monday 4am)"
+    )
+    database_path: str = Field(
+        default="/data/databases",
+        description="Path for storing downloaded databases"
     )
     
     class Config:
@@ -186,4 +221,17 @@ ADMIN_KEY=your-admin-key            # Admin API key
 
 # Logging
 LOG_LEVEL=INFO                       # Log level
+
+# Query and Caching Configuration
+CACHE_TYPE=memory                    # Options: memory, redis, sqlite, none
+REDIS_URL=redis://localhost:6379    # Redis URL (if using Redis cache)
+CACHE_TTL=604800                     # Cache TTL in seconds (optional)
+QUERY_RATE_LIMIT=50                  # Max IPs per query
+
+# Session Configuration
+SESSION_SECRET_KEY=your-secret-key  # Secret for session cookies
+
+# Database Update Configuration
+DATABASE_UPDATE_SCHEDULE=0 4 * * 1  # Cron schedule (Monday 4am)
+DATABASE_PATH=/data/databases       # Path for storing databases
 """

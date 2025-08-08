@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoIP Query Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div x-data="geoipApp()" x-init="init()" class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">GeoIP Query Tool</h1>
+            <p class="text-gray-600">Look up geographic and network information for IP addresses</p>
+        </div>
+
+        <!-- Authentication Section -->
+        <div x-show="!authenticated" x-cloak class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="max-w-md mx-auto">
+                <label class="block text-sm font-medium text-gray-700 mb-2">API Key Required</label>
+                <div class="flex space-x-2">
+                    <input 
+                        type="password" 
+                        x-model="apiKey" 
+                        @keyup.enter="authenticate()"
+                        placeholder="Enter your API key"
+                        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <button 
+                        @click="authenticate()"
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                        Authenticate
+                    </button>
+                </div>
+                <div x-show="authError" x-cloak class="mt-2 text-sm text-red-600" x-text="authError"></div>
+            </div>
+        </div>
+
+        <!-- Query Section -->
+        <div x-show="authenticated" x-cloak class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="space-y-4">
+                <!-- IP Input -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        IP Addresses
+                        <span class="text-gray-500 font-normal">(one per line or comma-separated, max 50)</span>
+                    </label>
+                    <textarea 
+                        x-model="ips" 
+                        @keyup.ctrl.enter="queryIPs()"
+                        placeholder="Enter IP addresses...&#10;e.g., 8.8.8.8&#10;1.1.1.1&#10;or 8.8.8.8, 1.1.1.1"
+                        class="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                        :class="{'opacity-50': loading}"></textarea>
+                </div>
+
+                <!-- Options and Submit -->
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            x-model="fullData" 
+                            class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                        <span class="ml-2 text-sm text-gray-700">Full Data</span>
+                        <span class="ml-1 text-xs text-gray-500">(includes all available fields)</span>
+                    </label>
+                    
+                    <div class="flex items-center space-x-2">
+                        <button 
+                            @click="clearAll()"
+                            class="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors">
+                            Clear
+                        </button>
+                        <button 
+                            @click="queryIPs()"
+                            :disabled="loading || !ips.trim()"
+                            class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
+                            <span x-show="!loading">Query</span>
+                            <span x-show="loading" class="flex items-center">
+                                <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Querying...
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div x-show="stats.total > 0" x-cloak class="text-sm text-gray-600">
+                    Queried: <span class="font-medium" x-text="stats.total"></span> IPs |
+                    Found: <span class="font-medium text-green-600" x-text="stats.found"></span> |
+                    Not Found: <span class="font-medium text-orange-600" x-text="stats.notFound"></span> |
+                    Errors: <span class="font-medium text-red-600" x-text="stats.errors"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div x-show="authenticated && results && Object.keys(results).length > 0" x-cloak class="bg-white rounded-lg shadow-sm p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Results</h2>
+            
+            <!-- Results Table -->
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">IP Address</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Country</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ISP</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proxy/VPN</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usage Type</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="(data, ip) in results" :key="ip">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-4 py-3 whitespace-nowrap font-mono text-sm text-gray-900" x-text="ip"></td>
+                                
+                                <template x-if="!data.error">
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        <span x-text="data.country || '-'"></span>
+                                        <span x-show="data.country_code" class="text-gray-500" x-text="`(${data.country_code})`"></span>
+                                    </td>
+                                </template>
+                                <template x-if="data.error">
+                                    <td colspan="5" class="px-4 py-3 text-sm text-red-600" x-text="data.error"></td>
+                                </template>
+                                
+                                <template x-if="!data.error">
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        <span x-text="data.city || '-'"></span>
+                                        <span x-show="data.region" class="text-gray-500" x-text="`, ${data.region}`"></span>
+                                    </td>
+                                </template>
+                                
+                                <template x-if="!data.error">
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900" x-text="data.isp || data.organization || '-'"></td>
+                                </template>
+                                
+                                <template x-if="!data.error">
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                                        <span x-show="data.is_proxy" class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Proxy</span>
+                                        <span x-show="data.is_vpn" class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">VPN</span>
+                                        <span x-show="!data.is_proxy && !data.is_vpn" class="text-gray-500">-</span>
+                                    </td>
+                                </template>
+                                
+                                <template x-if="!data.error">
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900" x-text="data.usage_type || '-'"></td>
+                                </template>
+                                
+                                <td class="px-4 py-3 whitespace-nowrap text-center text-sm">
+                                    <button 
+                                        @click="viewDetails(ip, data)"
+                                        x-show="!data.error"
+                                        class="text-blue-600 hover:text-blue-800">
+                                        Details
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Details Modal -->
+        <div x-show="showModal" x-cloak 
+             class="fixed inset-0 z-50 overflow-y-auto"
+             @click.away="showModal = false"
+             @keydown.escape.window="showModal = false">
+            <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+                <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+                    <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+                </div>
+
+                <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">
+                            IP Details: <span class="font-mono" x-text="modalData.ip"></span>
+                        </h3>
+                        <div class="mt-2 max-h-96 overflow-y-auto">
+                            <dl class="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                                <template x-for="[key, value] in Object.entries(modalData.data || {})" :key="key">
+                                    <div class="py-2">
+                                        <dt class="text-sm font-medium text-gray-500" x-text="formatKey(key)"></dt>
+                                        <dd class="mt-1 text-sm text-gray-900" x-text="formatValue(value)"></dd>
+                                    </div>
+                                </template>
+                            </dl>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button 
+                            @click="copyToClipboard(modalData.data)"
+                            class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm">
+                            Copy JSON
+                        </button>
+                        <button 
+                            @click="showModal = false"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function geoipApp() {
+        return {
+            apiKey: '',
+            authenticated: false,
+            authError: '',
+            ips: '',
+            fullData: false,
+            loading: false,
+            results: null,
+            showModal: false,
+            modalData: {},
+            stats: {
+                total: 0,
+                found: 0,
+                notFound: 0,
+                errors: 0
+            },
+            
+            init() {
+                // Check for API key in localStorage
+                const savedKey = localStorage.getItem('geoip_api_key');
+                if (savedKey) {
+                    this.apiKey = savedKey;
+                    this.authenticated = true;
+                }
+                
+                // Check for IPs in URL parameters
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlIps = urlParams.get('ips');
+                if (urlIps) {
+                    this.ips = urlIps.replace(/,/g, '\n');
+                    if (this.authenticated) {
+                        this.queryIPs();
+                    }
+                }
+            },
+            
+            async authenticate() {
+                if (!this.apiKey) {
+                    this.authError = 'Please enter an API key';
+                    return;
+                }
+                
+                // Test the API key with a simple query
+                try {
+                    const response = await fetch('/query?ips=8.8.8.8', {
+                        headers: {
+                            'X-API-Key': this.apiKey
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        this.authenticated = true;
+                        this.authError = '';
+                        localStorage.setItem('geoip_api_key', this.apiKey);
+                    } else {
+                        this.authError = 'Invalid API key';
+                    }
+                } catch (error) {
+                    this.authError = 'Failed to authenticate';
+                }
+            },
+            
+            async queryIPs() {
+                if (!this.ips.trim()) return;
+                
+                this.loading = true;
+                this.results = null;
+                this.stats = { total: 0, found: 0, notFound: 0, errors: 0 };
+                
+                // Parse IPs
+                const ipList = this.ips
+                    .split(/[,\n]/)
+                    .map(ip => ip.trim())
+                    .filter(Boolean)
+                    .slice(0, 50); // Limit to 50
+                
+                if (ipList.length === 0) {
+                    this.loading = false;
+                    return;
+                }
+                
+                try {
+                    const params = new URLSearchParams({
+                        ips: ipList.join(','),
+                        full_data: this.fullData
+                    });
+                    
+                    const response = await fetch(`/query?${params}`, {
+                        headers: {
+                            'X-API-Key': this.apiKey
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        this.results = await response.json();
+                        
+                        // Calculate stats
+                        this.stats.total = Object.keys(this.results).length;
+                        for (const [ip, data] of Object.entries(this.results)) {
+                            if (data.error) {
+                                if (data.error.includes('Not found')) {
+                                    this.stats.notFound++;
+                                } else {
+                                    this.stats.errors++;
+                                }
+                            } else {
+                                this.stats.found++;
+                            }
+                        }
+                    } else if (response.status === 401) {
+                        this.authenticated = false;
+                        this.authError = 'Session expired, please re-authenticate';
+                        localStorage.removeItem('geoip_api_key');
+                    } else {
+                        alert('Query failed: ' + response.statusText);
+                    }
+                } catch (error) {
+                    alert('Query error: ' + error.message);
+                } finally {
+                    this.loading = false;
+                }
+            },
+            
+            viewDetails(ip, data) {
+                this.modalData = { ip, data };
+                this.showModal = true;
+            },
+            
+            formatKey(key) {
+                return key
+                    .replace(/_/g, ' ')
+                    .replace(/\b\w/g, l => l.toUpperCase());
+            },
+            
+            formatValue(value) {
+                if (value === null || value === undefined) return '-';
+                if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+                if (typeof value === 'object') return JSON.stringify(value);
+                return value;
+            },
+            
+            async copyToClipboard(data) {
+                try {
+                    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+                    alert('Copied to clipboard!');
+                } catch (error) {
+                    alert('Failed to copy');
+                }
+            },
+            
+            clearAll() {
+                this.ips = '';
+                this.results = null;
+                this.stats = { total: 0, found: 0, notFound: 0, errors: 0 };
+            }
+        }
+    }
+    </script>
+</body>
+</html>

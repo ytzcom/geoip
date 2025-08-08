@@ -11,7 +11,7 @@ services:
       - API_KEYS=${API_KEYS}
       
       # Storage Configuration
-      - STORAGE_MODE=${STORAGE_MODE:-s3}
+      - STORAGE_MODE=${STORAGE_MODE:-hybrid}  # Changed to hybrid for local query support
       
       # S3 Configuration (for s3/hybrid modes)
       - S3_BUCKET=${S3_BUCKET:-ytz-geoip}
@@ -20,8 +20,21 @@ services:
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - URL_EXPIRY_SECONDS=${URL_EXPIRY_SECONDS:-3600}
       
-      # Local Storage (for local/hybrid modes)
-      - LOCAL_DATA_PATH=/data
+      # Local Storage Configuration (for local/hybrid modes)
+      - LOCAL_DATA_PATH=/data/databases
+      - DATABASE_PATH=/data/databases
+      
+      # Query and Caching Configuration
+      - CACHE_TYPE=${CACHE_TYPE:-memory}
+      - REDIS_URL=${REDIS_URL}
+      - CACHE_TTL=${CACHE_TTL}
+      - QUERY_RATE_LIMIT=${QUERY_RATE_LIMIT:-50}
+      
+      # Session Configuration
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-change-me-in-production}
+      
+      # Database Update Configuration
+      - DATABASE_UPDATE_SCHEDULE=${DATABASE_UPDATE_SCHEDULE:-0 4 * * 1}
       
       # Server Configuration
       - WORKERS=${WORKERS:-1}
@@ -35,8 +48,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     
     volumes:
-      # Mount local data directory for local/hybrid storage modes
-      - ${LOCAL_DATA_PATH:-./data}:/data:ro
+      # Volume for database persistence (read-write for updates)
+      - geoip-databases:/data/databases
     
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health').raise_for_status()"]
@@ -50,3 +63,20 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Optional Redis service for caching (uncomment to enable)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: geoip-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+volumes:
+  geoip-databases:
+    driver: local
+  # redis-data:
+  #   driver: local

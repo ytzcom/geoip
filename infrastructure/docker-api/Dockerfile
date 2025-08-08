@@ -31,6 +31,14 @@ WORKDIR /app
 
 # Copy application files
 COPY --chown=geoip:geoip app.py config.py ./
+COPY --chown=geoip:geoip geoip_reader.py cache.py database_updater.py ./
+
+# Copy static files
+COPY --chown=geoip:geoip static/ ./static/
+
+# Create database directory for volume mount
+RUN mkdir -p /data/databases/raw/maxmind /data/databases/raw/ip2location && \
+    chown -R geoip:geoip /data/databases
 
 # Switch to non-root user
 USER geoip
@@ -46,6 +54,9 @@ ENV STORAGE_MODE=s3 \
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:${PORT}/health').raise_for_status()" || exit 1
+
+# Declare volume for database persistence
+VOLUME ["/data/databases"]
 
 # Expose port
 EXPOSE 8080
