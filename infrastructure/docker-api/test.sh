@@ -1113,22 +1113,28 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "admin" ]]; then
 
         # Test database update endpoint (requires longer timeout for S3 downloads)
         # Note: This downloads ~1.8GB of databases and can take 60-90 seconds
-        run_test "POST /admin/update-databases with valid admin key" \
-            "$API_URL/admin/update-databases" \
-            "200" \
-            "POST" \
-            "" \
-            "-H 'X-Admin-Key: $ADMIN_KEY'" \
-            "true" \
-            "" \
-            "120"
+        if [[ "$TEST_DOWNLOADS" == true ]]; then
+            run_test "POST /admin/update-databases with valid admin key" \
+                "$API_URL/admin/update-databases" \
+                "200" \
+                "POST" \
+                "" \
+                "-H 'X-Admin-Key: $ADMIN_KEY'" \
+                "true" \
+                "" \
+                "120"
 
-        run_test "POST /admin/update-databases with invalid admin key" \
-            "$API_URL/admin/update-databases" \
-            "401" \
-            "POST" \
-            "" \
-            "-H 'X-Admin-Key: invalid-admin-key'"
+            run_test "POST /admin/update-databases with invalid admin key" \
+                "$API_URL/admin/update-databases" \
+                "401" \
+                "POST" \
+                "" \
+                "-H 'X-Admin-Key: invalid-admin-key'"
+        else
+            ((TESTS_SKIPPED+=2))
+            log "  ${YELLOW}⊘${NC} Database update tests skipped (use --test-downloads to enable)"
+            log_verbose "  Skipping tests that download ~1.8GB of databases"
+        fi
 
         # Test cache endpoints
         run_test "POST /admin/cache/clear with valid admin key" \
