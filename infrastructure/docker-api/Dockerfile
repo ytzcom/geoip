@@ -44,10 +44,10 @@ RUN mkdir -p /data/databases/raw/maxmind /data/databases/raw/ip2location && \
 USER geoip
 
 # Environment variables (defaults)
-ENV STORAGE_MODE=s3 \
+ENV USE_S3_URLS=true \
     PORT=8080 \
     WORKERS=1 \
-    LOCAL_DATA_PATH=/data \
+    DATABASE_PATH=/data/databases \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

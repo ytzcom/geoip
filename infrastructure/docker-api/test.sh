@@ -445,9 +445,9 @@ check_container_health() {
         local db_count=$(echo "$health_check" | LC_ALL=C sed -n 's/.*"databases_available":\([0-9]*\).*/\1/p')
         log "  Databases available: $db_count"
         
-        # Extract storage mode
-        local storage_mode=$(echo "$health_check" | LC_ALL=C sed -n 's/.*"storage_mode":"\([^"]*\)".*/\1/p')
-        log "  Storage mode: $storage_mode"
+        # Extract download configuration
+        local use_s3_urls=$(echo "$health_check" | LC_ALL=C sed -n 's/.*"use_s3_urls":\([^,}]*\).*/\1/p')
+        log "  Download URLs: $([ "$use_s3_urls" = "true" ] && echo "S3 pre-signed" || echo "Local serving")"
     else
         log -e "${YELLOW}Warning: Container health check returned unexpected response${NC}"
     fi
@@ -790,18 +790,18 @@ fi
 if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
     log_category "Database URL Tests"
     
-    # Get storage mode first
-    storage_mode=$(curl -s "$API_URL/health" | LC_ALL=C sed -n 's/.*"storage_mode":"\([^"]*\)".*/\1/p')
+    # Get download configuration first
+    use_s3_urls=$(curl -s "$API_URL/health" | LC_ALL=C sed -n 's/.*"use_s3_urls":\([^,}]*\).*/\1/p')
     
     # Test that /auth returns proper URLs for databases
-    log_verbose "  Testing URL format for $storage_mode storage mode"
+    log_verbose "  Testing URL format (S3 URLs: $use_s3_urls)"
     response=$(curl -s -X POST "$API_URL/auth" \
         -H "X-API-Key: $API_KEY" \
         -H "Content-Type: application/json" \
         -d '{"databases": ["GeoIP2-City.mmdb", "GeoIP2-Country.mmdb"]}')
     
     # Test 1: /auth returns URLs in correct format
-    if [[ "$storage_mode" == "s3" ]]; then
+    if [[ "$use_s3_urls" == "true" ]]; then
         if echo "$response" | grep -qE 'https://.*\.s3\.amazonaws\.com/.*'; then
             ((TESTS_PASSED++))
             log "  ${GREEN}✓${NC} POST /auth returns S3 pre-signed URLs"
@@ -830,7 +830,7 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
     fi
     
     # Test 3: Test URL accessibility (verify without full download)
-    if [[ "$storage_mode" == "local" ]] || [[ "$storage_mode" == "hybrid" ]]; then
+    if [[ "$use_s3_urls" == "false" ]]; then
         # Extract a URL and test it
         url=$(echo "$response" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('GeoIP2-Country.mmdb', ''))" 2>/dev/null)
         if [[ -n "$url" ]]; then
@@ -887,14 +887,15 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
     # Optional full download test (only if flag is set)
     if [[ "$TEST_DOWNLOADS" == true ]]; then
         log "  ${BLUE}Running full download test (this may take time)...${NC}"
-        if [[ "$storage_mode" == "local" ]] || [[ "$storage_mode" == "hybrid" ]]; then
-            run_test "GET /download full file (GeoIP2-Country.mmdb ~9MB)" \
-                "$API_URL/download/GeoIP2-Country.mmdb" \
-                "200" \
-                "GET" \
-                "" \
-                "-H 'X-API-Key: $API_KEY' --max-time 30"
-        else
+        # Always test the download endpoint (it's always available now)
+        run_test "GET /download full file (GeoIP2-Country.mmdb ~9MB)" \
+            "$API_URL/download/GeoIP2-Country.mmdb" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-API-Key: $API_KEY' --max-time 30"
+        
+        if [[ "$use_s3_urls" == "true" ]]; then
             # For S3 mode, download from the actual S3 URL
             url=$(echo "$response" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('GeoIP2-Country.mmdb', ''))" 2>/dev/null)
             if [[ -n "$url" ]]; then

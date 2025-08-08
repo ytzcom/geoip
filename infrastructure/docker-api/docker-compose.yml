@@ -10,18 +10,17 @@ services:
       # API Configuration
       - API_KEYS=${API_KEYS}
       
-      # Storage Configuration
-      - STORAGE_MODE=${STORAGE_MODE:-hybrid}  # Changed to hybrid for local query support
+      # Download Configuration
+      - USE_S3_URLS=${USE_S3_URLS:-true}  # Use S3 URLs for scalability
       
-      # S3 Configuration (for s3/hybrid modes)
+      # S3 Configuration (required when USE_S3_URLS=true)
       - S3_BUCKET=${S3_BUCKET:-ytz-geoip}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - URL_EXPIRY_SECONDS=${URL_EXPIRY_SECONDS:-3600}
       
-      # Local Storage Configuration (for local/hybrid modes)
-      - LOCAL_DATA_PATH=/data/databases
+      # Database Storage Configuration (always required)
       - DATABASE_PATH=/data/databases
       
       # Query and Caching Configuration

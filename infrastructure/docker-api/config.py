@@ -26,14 +26,14 @@ class Settings(BaseSettings):
             return [k.strip() for k in self.api_keys_str.split(',') if k.strip()]
         return []
     
-    # Storage Configuration
-    storage_mode: str = Field(
-        default="s3",
-        alias="STORAGE_MODE",
-        description="Storage mode: s3, local, or hybrid"
+    # Download Configuration
+    use_s3_urls: bool = Field(
+        default=True,
+        alias="USE_S3_URLS",
+        description="Use S3 pre-signed URLs for downloads (otherwise serve files directly)"
     )
     
-    # S3 Configuration (for s3 and hybrid modes)
+    # S3 Configuration (required when use_s3_urls is true)
     s3_bucket: str = Field(
         default="ytz-geoip",
         description="S3 bucket name for GeoIP databases"
@@ -55,11 +55,6 @@ class Settings(BaseSettings):
         description="Pre-signed URL expiry time in seconds"
     )
     
-    # Local Storage Configuration (for local and hybrid modes)
-    local_data_path: str = Field(
-        default="/data",
-        description="Path to local GeoIP database files"
-    )
     
     # Server Configuration
     port: int = Field(
@@ -161,9 +156,9 @@ def validate_settings(settings: Settings) -> bool:
     Returns:
         True if valid, raises exception if invalid
     """
-    # Check storage mode
-    if settings.storage_mode not in ['s3', 'local', 'hybrid']:
-        raise ValueError(f"Invalid storage_mode: {settings.storage_mode}")
+    # Validate use_s3_urls is a boolean (Pydantic handles this, but be explicit)
+    if not isinstance(settings.use_s3_urls, bool):
+        raise ValueError(f"Invalid use_s3_urls: {settings.use_s3_urls} (must be true or false)")
     
     # Check API keys
     if not settings.api_keys:
@@ -176,14 +171,13 @@ def validate_settings(settings: Settings) -> bool:
         raise ValueError("No valid API keys after cleanup")
     
     # Check S3 configuration if needed
-    if settings.storage_mode in ['s3', 'hybrid']:
+    if settings.use_s3_urls:
         if not settings.s3_bucket:
-            raise ValueError("S3 bucket name required for s3/hybrid mode")
+            raise ValueError("S3 bucket name required when use_s3_urls is true")
     
-    # Check local path if needed
-    if settings.storage_mode in ['local', 'hybrid']:
-        if not settings.local_data_path:
-            raise ValueError("Local data path required for local/hybrid mode")
+    # Check database path (always required for query functionality)
+    if not settings.database_path:
+        raise ValueError("Database path required for database storage")
     
     # Check admin configuration
     if settings.enable_admin and not settings.admin_key:
@@ -197,18 +191,15 @@ ENVIRONMENT_VARIABLES = """
 # API Configuration
 API_KEYS=key1,key2,key3              # Comma-separated API keys
 
-# Storage Configuration
-STORAGE_MODE=s3                      # Options: s3, local, hybrid
+# Download Configuration
+USE_S3_URLS=true                     # Use S3 URLs (true) or serve files directly (false)
 
-# S3 Configuration (for s3/hybrid modes)
+# S3 Configuration (required when USE_S3_URLS=true)
 S3_BUCKET=ytz-geoip                  # S3 bucket name
 AWS_ACCESS_KEY_ID=your-key-id        # Optional: AWS credentials
 AWS_SECRET_ACCESS_KEY=your-secret    # Optional: AWS credentials
 AWS_REGION=us-east-1                 # AWS region
 URL_EXPIRY_SECONDS=3600              # Pre-signed URL expiry
-
-# Local Storage (for local/hybrid modes)
-LOCAL_DATA_PATH=/data                # Path to GeoIP files
 
 # Server Configuration
 PORT=8080                            # Server port

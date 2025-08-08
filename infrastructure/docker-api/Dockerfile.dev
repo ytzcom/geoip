@@ -33,15 +33,15 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 COPY --chown=geoip:geoip app.py config.py ./
 
 # Create development data directory with sample files
-RUN mkdir -p /data/raw/maxmind /data/raw/ip2location && \
+RUN mkdir -p /data/databases/raw/maxmind /data/databases/raw/ip2location && \
     chown -R geoip:geoip /data
 
 # Switch to non-root user
 USER geoip
 
 # Environment variables for development
-ENV STORAGE_MODE=local \
-    LOCAL_DATA_PATH=/data \
+ENV USE_S3_URLS=false \
+    DATABASE_PATH=/data/databases \
     PORT=8080 \
     WORKERS=1 \
     DEBUG=true \
@@ -52,8 +52,8 @@ ENV STORAGE_MODE=local \
 
 # Create development configuration file
 RUN echo 'API_KEYS=dev-key-1,dev-key-2,test-key-1' > /app/.env && \
-    echo 'STORAGE_MODE=local' >> /app/.env && \
-    echo 'LOCAL_DATA_PATH=/data' >> /app/.env && \
+    echo 'USE_S3_URLS=false' >> /app/.env && \
+    echo 'DATABASE_PATH=/data/databases' >> /app/.env && \
     echo 'DEBUG=true' >> /app/.env && \
     echo 'LOG_LEVEL=DEBUG' >> /app/.env
 
