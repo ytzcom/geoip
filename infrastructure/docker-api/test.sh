@@ -5,17 +5,21 @@
 # =========================================
 #
 # Usage:
-#   ./test_comprehensive.sh [options]
+#   ./test.sh [options]
 #
 # Options:
-#   -v, --verbose     Show detailed output for each test
-#   -q, --quiet       Minimal output (exit code indicates success)
-#   -j, --json        Output results in JSON format
-#   -c, --category    Run specific test category only
-#   -h, --help        Show this help message
-#   -s, --skip-setup  Skip container health check
-#   -r, --retry       Number of retries for failed tests (default: 0)
-#   --test-downloads  Actually download files (slow, optional)
+#   -v, --verbose        Show detailed output for each test
+#   -q, --quiet          Minimal output (exit code indicates success)
+#   -j, --json           Output results in JSON format
+#   -c, --category       Run specific test category only
+#   -h, --help           Show this help message
+#   -s, --skip-setup     Skip container health check
+#   -r, --retry          Number of retries for failed tests (default: 0)
+#   --test-downloads     Actually download files (slow, optional)
+#   --start-container    Automatically start Docker container before tests
+#   --cleanup            Remove Docker container after tests complete
+#   --rebuild            Force rebuild container before starting
+#   --no-container-check Skip all container management
 #
 # Categories:
 #   health      Health and status endpoints
@@ -30,10 +34,13 @@
 #   all         Run all tests (default)
 #
 # Examples:
-#   ./test_comprehensive.sh                    # Run all tests
-#   ./test_comprehensive.sh -v                 # Run with verbose output
-#   ./test_comprehensive.sh -c query           # Run only query tests
-#   ./test_comprehensive.sh -q -j > results.json  # JSON output for CI/CD
+#   ./test.sh                                  # Run all tests (requires running container)
+#   ./test.sh --start-container                # Auto-start container and run tests
+#   ./test.sh --start-container --cleanup      # Start container, test, then cleanup
+#   ./test.sh -v --start-container             # Verbose output with container management
+#   ./test.sh -c query                         # Run only query tests
+#   ./test.sh -q -j > results.json            # JSON output for CI/CD
+#   ./test.sh --rebuild --start-container      # Force rebuild and test
 #
 # Environment Variables:
 #   API_URL       API endpoint (default: http://localhost:8080)
@@ -57,7 +64,17 @@ CATEGORY="all"
 SKIP_SETUP=false
 RETRY_COUNT=0
 TEST_DOWNLOADS=false
+START_CONTAINER=false
+CLEANUP_CONTAINER=false
+REBUILD_CONTAINER=false
+NO_CONTAINER_CHECK=false
 TEST_START_TIME=$(date +%s)
+
+# Container configuration
+CONTAINER_NAME="geoip-api"
+CONTAINER_IMAGE="geoip-api"
+CONTAINER_PORT="8080"
+ENV_FILE=".env.test"
 
 # Colors for output
 RED='\033[0;31m'
@@ -75,6 +92,184 @@ CURRENT_CATEGORY=""
 
 # Test results array for JSON output
 declare -a TEST_RESULTS
+
+# =========================================
+# Prerequisite Check Functions
+# =========================================
+
+check_prerequisites() {
+    log "Checking prerequisites..."
+    
+    # Check if .env.test file exists
+    if [[ ! -f "$ENV_FILE" ]]; then
+        log -e "${RED}Error: $ENV_FILE file not found${NC}"
+        log ""
+        log "The test suite requires a $ENV_FILE file for configuration."
+        log "Please copy the example file and customize it:"
+        log ""
+        log -e "  ${YELLOW}cp .env.example $ENV_FILE${NC}"
+        log ""
+        log "Then edit $ENV_FILE to set your test configuration."
+        exit 1
+    fi
+    
+    # Check if Docker is available
+    if ! command -v docker >/dev/null 2>&1; then
+        log -e "${RED}Error: Docker is not installed or not in PATH${NC}"
+        log ""
+        log "Please install Docker to run the test suite:"
+        log "  https://docs.docker.com/get-docker/"
+        exit 1
+    fi
+    
+    # Check if Docker daemon is running
+    if ! docker info >/dev/null 2>&1; then
+        log -e "${RED}Error: Docker daemon is not running${NC}"
+        log ""
+        log "Please start Docker and try again:"
+        log "  - On macOS: Start Docker Desktop"
+        log "  - On Linux: sudo systemctl start docker"
+        exit 1
+    fi
+    
+    log -e "${GREEN}✓${NC} Prerequisites check passed"
+}
+
+check_docker_image() {
+    log "Checking Docker image availability..."
+    
+    # Check if the Docker image exists
+    if ! docker image inspect "$CONTAINER_IMAGE" >/dev/null 2>&1; then
+        log -e "${RED}Error: Docker image '$CONTAINER_IMAGE' not found${NC}"
+        log ""
+        log "Please build the Docker image first:"
+        log ""
+        log -e "  ${YELLOW}docker build -t $CONTAINER_IMAGE .${NC}"
+        log ""
+        log "Or ensure you're in the correct directory with a Dockerfile."
+        exit 1
+    fi
+    
+    log -e "${GREEN}✓${NC} Docker image '$CONTAINER_IMAGE' found"
+}
+
+handle_existing_container() {
+    # Check if container already exists
+    if docker ps -a --filter "name=$CONTAINER_NAME" --format "table {{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
+        local container_status=$(docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Status}}" | tail -n +2)
+        
+        if [[ -n "$container_status" ]]; then
+            log -e "${YELLOW}Warning: Container '$CONTAINER_NAME' is already running${NC}"
+            log "  Status: $container_status"
+            
+            # Check if it's healthy
+            local health_check=$(curl -s "$API_URL/health" 2>/dev/null || echo "")
+            if [[ -n "$health_check" ]] && echo "$health_check" | grep -q '"status":"healthy"'; then
+                log -e "${GREEN}✓${NC} Existing container is healthy, using it for tests"
+                return 0
+            else
+                log -e "${YELLOW}Warning: Existing container is not responding, restarting...${NC}"
+                docker stop "$CONTAINER_NAME" >/dev/null 2>&1
+                docker rm "$CONTAINER_NAME" >/dev/null 2>&1
+            fi
+        else
+            log "Removing stopped container '$CONTAINER_NAME'..."
+            docker rm "$CONTAINER_NAME" >/dev/null 2>&1
+        fi
+    fi
+    
+    return 1
+}
+
+start_container() {
+    log "Starting Docker container..."
+    
+    # Stop and remove existing container if rebuild requested
+    if [[ "$REBUILD_CONTAINER" == true ]]; then
+        log "Rebuilding: Stopping and removing existing container..."
+        docker stop "$CONTAINER_NAME" >/dev/null 2>&1
+        docker rm "$CONTAINER_NAME" >/dev/null 2>&1
+    fi
+    
+    # Check for existing container
+    if handle_existing_container; then
+        return 0
+    fi
+    
+    # Check if port is already in use
+    if netstat -tln 2>/dev/null | grep -q ":$CONTAINER_PORT " || ss -tln 2>/dev/null | grep -q ":$CONTAINER_PORT "; then
+        log -e "${RED}Error: Port $CONTAINER_PORT is already in use${NC}"
+        log ""
+        log "Please stop the service using port $CONTAINER_PORT or use a different port:"
+        log "  lsof -ti:$CONTAINER_PORT | xargs kill"
+        exit 1
+    fi
+    
+    # Start the container with the exact command specified
+    log "Running: docker run -d --name $CONTAINER_NAME -p $CONTAINER_PORT:$CONTAINER_PORT --env-file $ENV_FILE -v geoip_databases:/data/databases $CONTAINER_IMAGE"
+    
+    local container_id
+    container_id=$(docker run -d --name "$CONTAINER_NAME" -p "$CONTAINER_PORT:$CONTAINER_PORT" --env-file "$ENV_FILE" -v geoip_databases:/data/databases "$CONTAINER_IMAGE" 2>&1)
+    
+    if [[ $? -eq 0 ]]; then
+        log -e "${GREEN}✓${NC} Container started successfully (ID: ${container_id:0:12})"
+        return 0
+    else
+        log -e "${RED}Error: Failed to start container${NC}"
+        log "Docker error: $container_id"
+        
+        # Show container logs if available
+        if docker ps -a --filter "name=$CONTAINER_NAME" --format "table {{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
+            log ""
+            log "Container logs:"
+            docker logs "$CONTAINER_NAME" 2>&1 | tail -n 10
+        fi
+        
+        exit 1
+    fi
+}
+
+wait_for_container() {
+    log "Waiting for container to be healthy..."
+    
+    local max_attempts=30
+    local attempt=0
+    
+    while [[ $attempt -lt $max_attempts ]]; do
+        local health_check=$(curl -s "$API_URL/health" 2>/dev/null || echo "")
+        
+        if [[ -n "$health_check" ]] && echo "$health_check" | grep -q '"status":"healthy"'; then
+            log -e "${GREEN}✓${NC} Container is healthy and ready"
+            return 0
+        fi
+        
+        ((attempt++))
+        if [[ $attempt -eq $max_attempts ]]; then
+            log -e "${RED}Error: Container failed to become healthy within ${max_attempts} seconds${NC}"
+            log ""
+            log "Container logs:"
+            docker logs "$CONTAINER_NAME" 2>&1 | tail -n 20
+            exit 1
+        fi
+        
+        if [[ "$QUIET" == false ]]; then
+            echo -n "."
+        fi
+        sleep 1
+    done
+}
+
+cleanup_container() {
+    if [[ "$CLEANUP_CONTAINER" == true ]]; then
+        log ""
+        log "Cleaning up container..."
+        
+        docker stop "$CONTAINER_NAME" >/dev/null 2>&1
+        docker rm "$CONTAINER_NAME" >/dev/null 2>&1
+        
+        log -e "${GREEN}✓${NC} Container cleaned up"
+    fi
+}
 
 # =========================================
 # Helper Functions
@@ -293,6 +488,22 @@ while [[ $# -gt 0 ]]; do
             TEST_DOWNLOADS=true
             shift
             ;;
+        --start-container)
+            START_CONTAINER=true
+            shift
+            ;;
+        --cleanup)
+            CLEANUP_CONTAINER=true
+            shift
+            ;;
+        --rebuild)
+            REBUILD_CONTAINER=true
+            shift
+            ;;
+        --no-container-check)
+            NO_CONTAINER_CHECK=true
+            shift
+            ;;
         -h|--help)
             show_help
             ;;
@@ -327,8 +538,35 @@ if [[ "$JSON_OUTPUT" == false ]]; then
     fi
 fi
 
+# Pre-flight checks unless skipped
+if [[ "$NO_CONTAINER_CHECK" == false ]]; then
+    check_prerequisites
+fi
+
+# Container management
+if [[ "$START_CONTAINER" == true ]]; then
+    if [[ "$REBUILD_CONTAINER" == true ]]; then
+        log "Rebuilding Docker image..."
+        if ! docker build -t "$CONTAINER_IMAGE" . &>/dev/null; then
+            log -e "${RED}Error: Failed to rebuild Docker image${NC}"
+            exit 1
+        fi
+        log -g "Docker image rebuilt successfully"
+    fi
+    
+    check_docker_image
+    handle_existing_container
+    start_container
+    wait_for_container
+fi
+
+# Setup cleanup trap if requested
+if [[ "$CLEANUP_CONTAINER" == true ]]; then
+    trap cleanup_container EXIT
+fi
+
 # Check container health unless skipped
-if [[ "$SKIP_SETUP" == false ]]; then
+if [[ "$SKIP_SETUP" == false ]] && [[ "$NO_CONTAINER_CHECK" == false ]]; then
     check_container_health
 fi
 
