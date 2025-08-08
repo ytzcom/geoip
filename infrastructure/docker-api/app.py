@@ -462,11 +462,18 @@ async def root():
             "use_s3_urls": settings.use_s3_urls,
             "endpoints": {
                 "auth": "/auth",
-                "query": "/query",
+                "query": "/query", 
                 "health": "/health",
                 "metrics": "/metrics",
                 "download": "/download/{database_name}",
-                "install": "/install"
+                "install": "/install",
+                "admin": {
+                    "databases": "/admin/databases/status",
+                    "downloads": "/admin/downloads/status", 
+                    "retry": "/admin/downloads/retry",
+                    "cleanup": "/admin/downloads/cleanup",
+                    "update": "/admin/update-databases"
+                } if settings.enable_admin else None
             }
         }
 
@@ -989,6 +996,145 @@ if settings.enable_admin:
         except Exception as e:
             logger.error(f"Admin job trigger failed: {e}")
             raise HTTPException(status_code=500, detail=f"Job trigger failed: {str(e)}")
+
+    @app.get("/admin/downloads/status")
+    async def get_download_status_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get detailed download status for all databases (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            from database_updater import DatabaseUpdater
+            updater = DatabaseUpdater()
+            status = updater.get_download_status()
+            
+            # Add summary statistics
+            summary = {
+                "total_databases": len(status),
+                "downloaded": sum(1 for db in status.values() if db['exists']),
+                "missing": sum(1 for db in status.values() if not db['exists']),
+                "total_size_mb": sum(db['size_mb'] for db in status.values()),
+                "temp_files_count": sum(len(db['temp_files']) for db in status.values())
+            }
+            
+            return {
+                "summary": summary,
+                "databases": status,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Admin download status check failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Download status check failed: {str(e)}")
+
+    @app.post("/admin/downloads/cleanup")
+    async def cleanup_downloads_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Clean up temporary download files (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            from database_updater import DatabaseUpdater
+            updater = DatabaseUpdater()
+            await updater.cleanup_old_files()
+            logger.info("Admin triggered download cleanup")
+            
+            return {"message": "Download cleanup completed successfully"}
+        except Exception as e:
+            logger.error(f"Admin download cleanup failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Download cleanup failed: {str(e)}")
+
+    @app.post("/admin/downloads/retry")
+    async def retry_failed_downloads_endpoint(
+        x_admin_key: Optional[str] = Header(None),
+        databases: Optional[str] = Query(None, description="Comma-separated list of database names to retry, or 'all' for all missing")
+    ):
+        """Retry downloading specific databases (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            from database_updater import DatabaseUpdater, AVAILABLE_DATABASES
+            updater = DatabaseUpdater()
+            
+            # Determine which databases to retry
+            if databases == "all" or not databases:
+                # Retry all missing databases
+                current_status = updater.get_download_status()
+                databases_to_retry = [name for name, status in current_status.items() if not status['exists']]
+            else:
+                # Retry specific databases
+                databases_to_retry = [db.strip() for db in databases.split(',')]
+                # Validate database names
+                invalid_dbs = [db for db in databases_to_retry if db not in AVAILABLE_DATABASES]
+                if invalid_dbs:
+                    raise HTTPException(status_code=400, detail=f"Invalid database names: {', '.join(invalid_dbs)}")
+            
+            if not databases_to_retry:
+                return {"message": "No databases need to be downloaded", "databases_checked": []}
+            
+            logger.info(f"Admin triggered retry for databases: {', '.join(databases_to_retry)}")
+            
+            # Create a custom updater method for specific databases
+            results = {}
+            
+            import aiohttp
+            import asyncio
+            
+            connector = aiohttp.TCPConnector(
+                limit=10,
+                limit_per_host=5,
+                ttl_dns_cache=300,
+                use_dns_cache=True,
+            )
+            
+            timeout = aiohttp.ClientTimeout(
+                total=updater.download_timeout,
+                connect=updater.connection_timeout
+            )
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                tasks = {}
+                for db_name in databases_to_retry:
+                    s3_path = AVAILABLE_DATABASES[db_name]
+                    task = updater.download_database(session, db_name, s3_path)
+                    tasks[db_name] = task
+                
+                # Execute downloads concurrently
+                download_results = await asyncio.gather(
+                    *tasks.values(), 
+                    return_exceptions=True
+                )
+                
+                # Map results back to database names
+                for db_name, result in zip(tasks.keys(), download_results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Exception retrying {db_name}: {result}")
+                        results[db_name] = False
+                    else:
+                        results[db_name] = result
+            
+            successful = [name for name, success in results.items() if success]
+            failed = [name for name, success in results.items() if not success]
+            
+            response = {
+                "message": f"Retry completed: {len(successful)}/{len(results)} successful",
+                "successful_downloads": successful,
+                "failed_downloads": failed,
+                "results": results
+            }
+            
+            logger.info(f"Admin retry completed: {len(successful)}/{len(results)} successful")
+            return response
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Admin download retry failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Download retry failed: {str(e)}")
 
     @app.get("/admin/status")
     async def get_admin_status_endpoint(

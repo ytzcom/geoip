@@ -9,8 +9,9 @@ import asyncio
 import aiohttp
 import logging
 import subprocess
+import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import boto3
 from botocore.exceptions import ClientError
@@ -42,6 +43,14 @@ class DatabaseUpdater:
         self.settings = get_settings()
         self.s3_client = self._init_s3_client()
         self.database_path = Path(self.settings.database_path)
+        
+        # Download configuration
+        self.max_retries = 3
+        self.retry_delay = 5  # seconds
+        self.min_file_size = 1000  # bytes - files smaller than this are likely error pages
+        self.download_timeout = 1800  # 30 minutes for large files
+        self.connection_timeout = 60  # 1 minute for connection
+        self.progress_log_interval = 10  # Log progress every 10 seconds for large files
         
     def _init_s3_client(self):
         """Initialize S3 client."""
@@ -80,10 +89,108 @@ class DatabaseUpdater:
             logger.error(f"Error generating S3 URL for {database_name}: {str(e)}")
             return None
     
+    async def download_database_with_progress(self, session: aiohttp.ClientSession, 
+                                           database_name: str, s3_path: str, 
+                                           url: str, attempt: int = 1) -> Tuple[bool, Optional[str]]:
+        """
+        Download a single database with progress tracking and error handling.
+        
+        Args:
+            session: aiohttp session for downloads
+            database_name: Name of the database
+            s3_path: S3 path relative to bucket root
+            url: Pre-signed S3 URL
+            attempt: Current attempt number
+            
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
+        """
+        # Prepare local path
+        local_path = self.database_path / s3_path
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create temp file for atomic replacement
+        temp_path = local_path.with_suffix(f'.tmp.{attempt}')
+        
+        start_time = time.time()
+        last_progress_time = start_time
+        
+        try:
+            logger.info(f"Starting download of {database_name} (attempt {attempt}/{self.max_retries})")
+            
+            timeout = aiohttp.ClientTimeout(
+                total=self.download_timeout,
+                connect=self.connection_timeout
+            )
+            
+            async with session.get(url, timeout=timeout) as response:
+                if response.status != 200:
+                    error_msg = f"HTTP {response.status}: {response.reason}"
+                    logger.warning(f"Download failed for {database_name}: {error_msg}")
+                    return False, error_msg
+                
+                # Get content length for progress tracking
+                content_length = response.headers.get('Content-Length')
+                total_size = int(content_length) if content_length else None
+                
+                logger.info(f"Downloading {database_name}" + 
+                           (f" ({total_size:,} bytes)" if total_size else " (size unknown)"))
+                
+                downloaded = 0
+                chunk_size = 8192  # 8KB chunks
+                
+                with open(temp_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(chunk_size):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Log progress for large files
+                        current_time = time.time()
+                        if current_time - last_progress_time >= self.progress_log_interval:
+                            progress_info = f"Downloaded {downloaded:,} bytes"
+                            if total_size:
+                                percent = (downloaded / total_size) * 100
+                                progress_info += f" ({percent:.1f}%)"
+                            logger.info(f"{database_name}: {progress_info}")
+                            last_progress_time = current_time
+                
+                # Validate file size
+                if downloaded < self.min_file_size:
+                    error_msg = f"File too small ({downloaded} bytes), likely an error page"
+                    logger.error(f"Download validation failed for {database_name}: {error_msg}")
+                    temp_path.unlink()
+                    return False, error_msg
+                
+                # Atomic replace
+                temp_path.replace(local_path)
+                
+                duration = time.time() - start_time
+                speed_mbps = (downloaded / (1024 * 1024)) / duration if duration > 0 else 0
+                
+                logger.info(f"✅ Successfully downloaded {database_name}: " + 
+                           f"{downloaded:,} bytes in {duration:.1f}s ({speed_mbps:.1f} MB/s)")
+                return True, None
+                
+        except asyncio.TimeoutError:
+            error_msg = f"Download timeout after {self.download_timeout}s"
+            logger.warning(f"Timeout downloading {database_name}: {error_msg}")
+        except aiohttp.ClientError as e:
+            error_msg = f"Client error: {str(e)}"
+            logger.warning(f"Client error downloading {database_name}: {error_msg}")
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            logger.error(f"Error downloading {database_name}: {error_msg}")
+        
+        # Cleanup temp file on failure
+        if temp_path.exists():
+            temp_path.unlink()
+        
+        return False, error_msg
+
     async def download_database(self, session: aiohttp.ClientSession, 
                               database_name: str, s3_path: str) -> bool:
         """
-        Download a single database from S3.
+        Download a single database with retry logic.
         
         Args:
             session: aiohttp session for downloads
@@ -96,71 +203,96 @@ class DatabaseUpdater:
         # Generate S3 pre-signed URL
         url = self.generate_s3_presigned_url(database_name)
         if not url:
-            logger.error(f"Failed to generate URL for {database_name}")
+            logger.error(f"❌ Failed to generate URL for {database_name}")
             return False
         
-        # Prepare local path
-        local_path = self.database_path / s3_path
-        local_path.parent.mkdir(parents=True, exist_ok=True)
+        # Try download with retries
+        for attempt in range(1, self.max_retries + 1):
+            success, error_msg = await self.download_database_with_progress(
+                session, database_name, s3_path, url, attempt
+            )
+            
+            if success:
+                return True
+            
+            # If this wasn't the last attempt, wait before retrying
+            if attempt < self.max_retries:
+                retry_delay = self.retry_delay * (2 ** (attempt - 1))  # Exponential backoff
+                logger.info(f"Retrying {database_name} in {retry_delay}s (attempt {attempt + 1}/{self.max_retries})")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(f"❌ Failed to download {database_name} after {self.max_retries} attempts. Last error: {error_msg}")
         
-        # Create temp file for atomic replacement
-        temp_path = local_path.with_suffix('.tmp')
-        
-        try:
-            # Download file
-            async with session.get(url) as response:
-                if response.status == 200:
-                    content = await response.read()
-                    
-                    # Write to temp file
-                    with open(temp_path, 'wb') as f:
-                        f.write(content)
-                    
-                    # Atomic replace
-                    temp_path.replace(local_path)
-                    
-                    logger.info(f"Downloaded {database_name} ({len(content):,} bytes)")
-                    return True
-                else:
-                    logger.error(f"Failed to download {database_name}: HTTP {response.status}")
-                    return False
-                    
-        except Exception as e:
-            logger.error(f"Error downloading {database_name}: {e}")
-            if temp_path.exists():
-                temp_path.unlink()
-            return False
+        return False
     
     async def update_all_databases(self) -> Dict[str, bool]:
         """
-        Download all databases from S3.
+        Download all databases from S3 concurrently.
         
         Returns:
             Dictionary mapping database names to success status
         """
-        logger.info("Starting database update from S3...")
+        logger.info("🚀 Starting parallel database update from S3...")
+        start_time = time.time()
         
-        # Create download tasks
+        # Create aiohttp session with connection limits
+        connector = aiohttp.TCPConnector(
+            limit=10,  # Total connection limit
+            limit_per_host=5,  # Per-host connection limit
+            ttl_dns_cache=300,  # DNS cache TTL
+            use_dns_cache=True,
+        )
+        
+        timeout = aiohttp.ClientTimeout(
+            total=self.download_timeout,
+            connect=self.connection_timeout
+        )
+        
         results = {}
         
-        async with aiohttp.ClientSession() as session:
-            tasks = []
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            # Create tasks for all databases
+            tasks = {}
             for db_name, s3_path in AVAILABLE_DATABASES.items():
                 task = self.download_database(session, db_name, s3_path)
-                tasks.append((db_name, task))
+                tasks[db_name] = task
+                logger.info(f"📋 Queued download task for {db_name}")
             
-            # Execute downloads concurrently
-            for db_name, task in tasks:
-                results[db_name] = await task
+            logger.info(f"⚡ Starting {len(tasks)} parallel downloads...")
+            
+            # Execute all downloads concurrently with proper error handling
+            download_results = await asyncio.gather(
+                *tasks.values(), 
+                return_exceptions=True
+            )
+            
+            # Map results back to database names
+            for db_name, result in zip(tasks.keys(), download_results):
+                if isinstance(result, Exception):
+                    logger.error(f"❌ Exception downloading {db_name}: {result}")
+                    results[db_name] = False
+                else:
+                    results[db_name] = result
         
-        # Log summary
-        successful = sum(1 for success in results.values() if success)
-        total = len(results)
-        logger.info(f"Database update complete: {successful}/{total} successful")
+        # Log detailed summary
+        successful = [name for name, success in results.items() if success]
+        failed = [name for name, success in results.items() if not success]
+        
+        duration = time.time() - start_time
+        logger.info(f"🏁 Database update complete in {duration:.1f}s: {len(successful)}/{len(results)} successful")
+        
+        if successful:
+            logger.info(f"✅ Successfully downloaded: {', '.join(successful)}")
+        
+        if failed:
+            logger.error(f"❌ Failed downloads: {', '.join(failed)}")
         
         # Validate databases if all downloaded successfully
-        if successful == total:
+        if len(successful) == len(results):
+            logger.info("🔍 All downloads successful, running validation...")
             await self.validate_databases()
+        else:
+            logger.warning(f"⚠️  Skipping validation due to {len(failed)} failed downloads")
         
         return results
     
@@ -205,12 +337,62 @@ class DatabaseUpdater:
     async def cleanup_old_files(self):
         """Remove any temporary or old database files."""
         try:
-            # Remove .tmp files
-            for tmp_file in self.database_path.rglob("*.tmp"):
-                tmp_file.unlink()
-                logger.debug(f"Removed temp file: {tmp_file}")
+            # Remove .tmp and .tmp.* files (from retry attempts)
+            temp_patterns = ["*.tmp", "*.tmp.*"]
+            cleaned_count = 0
+            
+            for pattern in temp_patterns:
+                for tmp_file in self.database_path.rglob(pattern):
+                    try:
+                        tmp_file.unlink()
+                        logger.debug(f"🗑️  Removed temp file: {tmp_file}")
+                        cleaned_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temp file {tmp_file}: {e}")
+            
+            if cleaned_count > 0:
+                logger.info(f"🧹 Cleaned up {cleaned_count} temporary files")
+            
         except Exception as e:
             logger.warning(f"Error during cleanup: {e}")
+    
+    def get_download_status(self) -> Dict[str, Dict[str, any]]:
+        """
+        Get current status of all databases for debugging.
+        
+        Returns:
+            Dictionary with database status information
+        """
+        status = {}
+        
+        for db_name, s3_path in AVAILABLE_DATABASES.items():
+            local_path = self.database_path / s3_path
+            
+            db_status = {
+                'name': db_name,
+                's3_path': s3_path,
+                'local_path': str(local_path),
+                'exists': local_path.exists(),
+                'size_bytes': 0,
+                'size_mb': 0,
+                'last_modified': None,
+                'temp_files': []
+            }
+            
+            if local_path.exists():
+                stat = local_path.stat()
+                db_status['size_bytes'] = stat.st_size
+                db_status['size_mb'] = round(stat.st_size / (1024 * 1024), 2)
+                db_status['last_modified'] = stat.st_mtime
+            
+            # Check for temp files
+            temp_pattern = local_path.with_suffix('.tmp*')
+            for tmp_file in local_path.parent.glob(f"{local_path.stem}.tmp*"):
+                db_status['temp_files'].append(str(tmp_file))
+            
+            status[db_name] = db_status
+            
+        return status
 
 
 async def update_databases():
