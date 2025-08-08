@@ -8,10 +8,30 @@
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <style>
         [x-cloak] { display: none !important; }
+        
+        /* Prevent horizontal scrolling and handle text overflow */
+        .truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        /* Responsive table layout */
+        @media (max-width: 768px) {
+            .max-w-xs {
+                max-width: 120px;
+            }
+        }
+        
+        @media (min-width: 769px) {
+            .max-w-xs {
+                max-width: 200px;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-50">
-    <div x-data="geoipApp()" x-init="init()" class="container mx-auto px-4 py-8 max-w-6xl">
+    <div x-data="geoipApp()" x-init="init()" class="container mx-auto px-4 py-8 max-w-7xl">
         <!-- Header -->
         <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
             <h1 class="text-3xl font-bold text-gray-800 mb-2">GeoIP Query Tool</h1>
@@ -101,68 +121,115 @@
 
         <!-- Results Section -->
         <div x-show="authenticated && results && Object.keys(results).length > 0" x-cloak class="bg-white rounded-lg shadow-sm p-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">Results</h2>
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-800">Results</h2>
+                
+                <!-- Column Settings -->
+                <div class="relative" x-data="{ showSettings: false }">
+                    <button 
+                        @click="showSettings = !showSettings"
+                        class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center space-x-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        <span>Columns</span>
+                    </button>
+                    
+                    <!-- Settings Dropdown -->
+                    <div x-show="showSettings" 
+                         @click.away="showSettings = false"
+                         x-cloak
+                         class="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                        <div class="p-3">
+                            <div class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Visible Columns</div>
+                            <div class="space-y-2">
+                                <template x-for="col in columns" :key="col.key">
+                                    <label class="flex items-center cursor-pointer">
+                                        <input 
+                                            type="checkbox" 
+                                            x-model="col.visible"
+                                            :disabled="!col.toggleable"
+                                            @change="saveColumnPreferences()"
+                                            class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50">
+                                        <span class="ml-2 text-sm text-gray-700" x-text="col.label"></span>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             
             <!-- Results Table -->
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
+            <div class="w-full">
+                <table class="w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">IP Address</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Country</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ISP</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proxy/VPN</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usage Type</th>
-                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            <template x-for="col in columns" :key="col.key">
+                                <th x-show="col.visible" 
+                                    class="px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider"
+                                    :class="col.align === 'center' ? 'text-center' : 'text-left'"
+                                    x-text="col.label"></th>
+                            </template>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         <template x-for="(data, ip) in results" :key="ip">
                             <tr class="hover:bg-gray-50">
-                                <td class="px-4 py-3 whitespace-nowrap font-mono text-sm text-gray-900" x-text="ip"></td>
+                                <!-- IP Address -->
+                                <td x-show="getColumn('ip').visible && !data.error" class="px-3 py-3 font-mono text-sm text-gray-900" x-text="ip"></td>
                                 
-                                <template x-if="!data.error">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                        <span x-text="data.country || '-'"></span>
-                                        <span x-show="data.country_code" class="text-gray-500" x-text="`(${data.country_code})`"></span>
-                                    </td>
-                                </template>
-                                <template x-if="data.error">
-                                    <td colspan="5" class="px-4 py-3 text-sm text-red-600" x-text="data.error"></td>
-                                </template>
+                                <!-- Country Code -->
+                                <td x-show="getColumn('country_code').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 w-20">
+                                    <span class="font-medium" x-text="data.country_code || '-'"></span>
+                                </td>
                                 
-                                <template x-if="!data.error">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                        <span x-text="data.city || '-'"></span>
-                                        <span x-show="data.region" class="text-gray-500" x-text="`, ${data.region}`"></span>
-                                    </td>
-                                </template>
+                                <!-- Country Name -->
+                                <td x-show="getColumn('country_name').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                    <div class="truncate max-w-xs" :title="data.country || '-'" x-text="data.country || '-'"></div>
+                                </td>
                                 
-                                <template x-if="!data.error">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900" x-text="data.isp || data.organization || '-'"></td>
-                                </template>
+                                <!-- City -->
+                                <td x-show="getColumn('city').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                    <div class="truncate max-w-xs" :title="data.city || '-'" x-text="data.city || '-'"></div>
+                                </td>
                                 
-                                <template x-if="!data.error">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                                <!-- Region -->
+                                <td x-show="getColumn('region').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                    <div class="truncate max-w-xs" :title="data.region || '-'" x-text="data.region || '-'"></div>
+                                </td>
+                                
+                                <!-- ISP -->
+                                <td x-show="getColumn('isp').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                    <div class="truncate max-w-xs" :title="data.isp || data.organization || '-'" x-text="data.isp || data.organization || '-'"></div>
+                                </td>
+                                
+                                <!-- Proxy/VPN -->
+                                <td x-show="getColumn('proxy_vpn').visible && !data.error" class="px-3 py-3 text-sm">
+                                    <div class="flex flex-wrap gap-1">
                                         <span x-show="data.is_proxy" class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Proxy</span>
                                         <span x-show="data.is_vpn" class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">VPN</span>
                                         <span x-show="!data.is_proxy && !data.is_vpn" class="text-gray-500">-</span>
-                                    </td>
-                                </template>
+                                    </div>
+                                </td>
                                 
-                                <template x-if="!data.error">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900" x-text="data.usage_type || '-'"></td>
-                                </template>
+                                <!-- Usage Type -->
+                                <td x-show="getColumn('usage_type').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                    <div class="truncate max-w-xs" :title="data.usage_type || '-'" x-text="data.usage_type || '-'"></div>
+                                </td>
                                 
-                                <td class="px-4 py-3 whitespace-nowrap text-center text-sm">
+                                <!-- Actions -->
+                                <td x-show="getColumn('actions').visible && !data.error" class="px-3 py-3 text-center text-sm">
                                     <button 
                                         @click="viewDetails(ip, data)"
-                                        x-show="!data.error"
                                         class="text-blue-600 hover:text-blue-800">
                                         Details
                                     </button>
                                 </td>
+                                
+                                <!-- Error message (spans all visible columns) -->
+                                <td x-show="data.error" :colspan="columns.filter(c => c.visible).length" class="px-4 py-3 text-sm text-red-600" x-text="data.error"></td>
                             </tr>
                         </template>
                     </tbody>
@@ -231,8 +298,34 @@
                 notFound: 0,
                 errors: 0
             },
+            columns: [
+                { key: 'ip', label: 'IP Address', visible: true, toggleable: false, align: 'left' },
+                { key: 'country_code', label: 'Country Code', visible: true, toggleable: true, align: 'left' },
+                { key: 'country_name', label: 'Country Name', visible: true, toggleable: true, align: 'left' },
+                { key: 'city', label: 'City', visible: false, toggleable: true, align: 'left' },
+                { key: 'region', label: 'Region', visible: false, toggleable: true, align: 'left' },
+                { key: 'isp', label: 'ISP', visible: true, toggleable: true, align: 'left' },
+                { key: 'proxy_vpn', label: 'Proxy/VPN', visible: true, toggleable: true, align: 'left' },
+                { key: 'usage_type', label: 'Usage Type', visible: true, toggleable: true, align: 'left' },
+                { key: 'actions', label: 'Actions', visible: true, toggleable: false, align: 'center' }
+            ],
             
             init() {
+                // Load column preferences from localStorage
+                const savedColumns = localStorage.getItem('geoip_column_preferences');
+                if (savedColumns) {
+                    try {
+                        const prefs = JSON.parse(savedColumns);
+                        this.columns.forEach(col => {
+                            if (col.toggleable && prefs[col.key] !== undefined) {
+                                col.visible = prefs[col.key];
+                            }
+                        });
+                    } catch (e) {
+                        console.error('Failed to load column preferences:', e);
+                    }
+                }
+                
                 // Check for API key in localStorage
                 const savedKey = localStorage.getItem('geoip_api_key');
                 if (savedKey) {
@@ -249,6 +342,20 @@
                         this.queryIPs();
                     }
                 }
+            },
+            
+            getColumn(key) {
+                return this.columns.find(col => col.key === key) || {};
+            },
+            
+            saveColumnPreferences() {
+                const prefs = {};
+                this.columns.forEach(col => {
+                    if (col.toggleable) {
+                        prefs[col.key] = col.visible;
+                    }
+                });
+                localStorage.setItem('geoip_column_preferences', JSON.stringify(prefs));
             },
             
             async authenticate() {
