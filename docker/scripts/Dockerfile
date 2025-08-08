@@ -6,6 +6,7 @@ WORKDIR /opt/geoip
 
 # Copy existing CLI scripts (DRY - reuse these!)
 COPY scripts/cli/geoip-update.sh .
+COPY scripts/cli/geoip-update-posix.sh .
 COPY scripts/cli/geoip-update.py .
 COPY scripts/cli/requirements.txt .
 

@@ -101,8 +101,15 @@ geoip_download_databases() {
         cmd_args="$cmd_args --databases '$GEOIP_DATABASES'"
     fi
     
-    # Use existing CLI script with appropriate flags
-    if sh -c "/opt/geoip/geoip-update.sh $cmd_args"; then
+    # Use POSIX-compliant script for better compatibility (works on Alpine)
+    # Falls back to bash version if POSIX version not available
+    local script_to_use="/opt/geoip/geoip-update.sh"
+    if [ -f /opt/geoip/geoip-update-posix.sh ]; then
+        script_to_use="/opt/geoip/geoip-update-posix.sh"
+        geoip_log_info "Using POSIX-compliant script for better compatibility"
+    fi
+    
+    if sh -c "$script_to_use $cmd_args"; then
         geoip_log_success "GeoIP databases downloaded successfully!"
         return 0
     else

@@ -4,11 +4,16 @@ This directory contains the scripts-only Docker image for easy GeoIP integration
 
 ## 📦 What's Included
 
-- **geoip-update.sh** - Main CLI script for downloading databases
+- **geoip-update-posix.sh** - POSIX-compliant script (works on Alpine/ash/dash)
+- **geoip-update.sh** - Full-featured bash script (requires bash)
 - **geoip-update.py** - Python validation script (optional)
 - **entrypoint-helper.sh** - Docker entrypoint helper functions
 - **setup-cron.sh** - Multi-system cron configuration
 - **validate.sh** - Basic validation without Python
+
+## 🐧 Alpine Linux Compatibility
+
+The image now includes a POSIX-compliant version that works perfectly on Alpine Linux and other minimal shells without requiring bash. The helper automatically detects and uses the appropriate script.
 
 ## 🚀 Quick Start
 
