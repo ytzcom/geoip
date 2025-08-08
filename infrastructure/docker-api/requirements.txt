@@ -13,3 +13,18 @@ requests==2.31.0
 # Additional utilities
 python-multipart==0.0.6  # For file uploads if needed
 python-dotenv==1.0.0      # For .env file support
+
+# GeoIP libraries
+geoip2==4.8.1
+IP2Location==8.10.0
+IP2Proxy==3.4.0
+
+# Caching
+redis==5.0.1
+aioredis==2.0.1
+
+# Scheduling
+apscheduler==3.10.4
+
+# Session management
+itsdangerous==2.1.2  # For secure session cookies

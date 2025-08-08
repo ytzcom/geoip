@@ -12,10 +12,23 @@ services:
       - API_KEYS=${API_KEYS:-dev-key-1,dev-key-2}
       
       # Storage Configuration - Local mode for development
-      - STORAGE_MODE=local
+      - STORAGE_MODE=${STORAGE_MODE:-local}
       
-      # Local Storage
-      - LOCAL_DATA_PATH=/data
+      # Local Storage Configuration
+      - LOCAL_DATA_PATH=/data/databases
+      - DATABASE_PATH=/data/databases
+      
+      # Query and Caching Configuration
+      - CACHE_TYPE=${CACHE_TYPE:-memory}
+      - REDIS_URL=${REDIS_URL}
+      - CACHE_TTL=${CACHE_TTL}
+      - QUERY_RATE_LIMIT=${QUERY_RATE_LIMIT:-50}
+      
+      # Session Configuration
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-dev-secret-key-change-in-production}
+      
+      # Database Update Configuration
+      - DATABASE_UPDATE_SCHEDULE=${DATABASE_UPDATE_SCHEDULE:-0 4 * * 1}
       
       # Server Configuration
       - WORKERS=1
@@ -30,8 +43,8 @@ services:
     
     volumes:
       # Mount local GeoIP database directory
-      # Update this path to point to your actual GeoIP database files
-      - ${LOCAL_DATA_PATH:-../../temp/raw}:/data:ro
+      # Update this path to point to your actual GeoIP database files  
+      - ${LOCAL_DATA_PATH:-../../temp}:/data/databases:ro
       
       # Mount source code for hot reload in debug mode
       - ./app.py:/app/app.py:ro
