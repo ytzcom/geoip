@@ -239,6 +239,7 @@
 
         <!-- Details Modal -->
         <div x-show="showModal" x-cloak 
+             x-data="{ activeTab: 'overview' }"
              class="fixed inset-0 z-50 overflow-y-auto"
              @click.away="showModal = false"
              @keydown.escape.window="showModal = false">
@@ -247,20 +248,48 @@
                     <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
                 </div>
 
-                <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+                <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
                     <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                         <h3 class="text-lg font-medium text-gray-900 mb-4">
                             IP Details: <span class="font-mono" x-text="modalData.ip"></span>
                         </h3>
+                        
+                        <!-- Tabs -->
+                        <div class="border-b border-gray-200 mb-4">
+                            <nav class="-mb-px flex space-x-8">
+                                <button 
+                                    @click="activeTab = 'overview'"
+                                    :class="activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                                    class="py-2 px-1 border-b-2 font-medium text-sm">
+                                    Overview
+                                </button>
+                                <button 
+                                    @click="activeTab = 'database'"
+                                    :class="activeTab === 'database' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                                    class="py-2 px-1 border-b-2 font-medium text-sm">
+                                    By Database
+                                </button>
+                                <button 
+                                    @click="activeTab = 'raw'"
+                                    :class="activeTab === 'raw' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                                    class="py-2 px-1 border-b-2 font-medium text-sm">
+                                    Raw JSON
+                                </button>
+                            </nav>
+                        </div>
+                        
+                        <!-- Tab Content -->
                         <div class="mt-2 max-h-96 overflow-y-auto">
-                            <dl class="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                                <template x-for="[key, value] in Object.entries(modalData.data || {})" :key="key">
-                                    <div class="py-2">
-                                        <dt class="text-sm font-medium text-gray-500" x-text="formatKey(key)"></dt>
-                                        <dd class="mt-1 text-sm text-gray-900" x-text="formatValue(value)"></dd>
-                                    </div>
-                                </template>
-                            </dl>
+                            <!-- Overview Tab -->
+                            <div x-show="activeTab === 'overview'" x-html="renderOverviewTab(modalData.data)"></div>
+                            
+                            <!-- By Database Tab -->
+                            <div x-show="activeTab === 'database'" x-html="renderDatabaseTab(modalData.data)"></div>
+                            
+                            <!-- Raw JSON Tab -->
+                            <div x-show="activeTab === 'raw'" class="bg-gray-50 rounded-lg p-4">
+                                <pre class="text-xs font-mono text-gray-700 whitespace-pre-wrap break-words" x-text="JSON.stringify(modalData.data, null, 2)"></pre>
+                            </div>
                         </div>
                     </div>
                     <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
@@ -476,6 +505,285 @@
                 this.ips = '';
                 this.results = null;
                 this.stats = { total: 0, found: 0, notFound: 0, errors: 0 };
+            },
+            
+            renderOverviewTab(data) {
+                if (!data || data.error) return '<p class="text-gray-500">No data available</p>';
+                
+                const sources = data._database_sources || {};
+                const databases = data._databases_available || {};
+                
+                // Helper function to create source badges
+                const getSourceBadges = (field) => {
+                    const fieldSources = sources[field];
+                    if (!fieldSources) return '';
+                    
+                    const sourceArray = Array.isArray(fieldSources) ? fieldSources : [fieldSources];
+                    return sourceArray.map(source => {
+                        let color = 'gray';
+                        if (source.includes('MaxMind')) color = 'blue';
+                        else if (source.includes('IP2Location')) color = 'green';
+                        else if (source.includes('IP2Proxy')) color = 'orange';
+                        
+                        return `<span class="ml-2 px-2 py-1 text-xs rounded-full bg-${color}-100 text-${color}-800">${source}</span>`;
+                    }).join('');
+                };
+                
+                // Helper function to format boolean values
+                const formatBoolean = (value) => {
+                    return value ? 
+                        '<span class="text-green-600">✓ Yes</span>' : 
+                        '<span class="text-gray-400">✗ No</span>';
+                };
+                
+                let html = '<div class="space-y-6">';
+                
+                // Location Information
+                html += '<div>';
+                html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">📍 Location Information</h4>';
+                html += '<dl class="space-y-2">';
+                
+                if (data.country) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Country:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.country}${getSourceBadges('country')}</dd>
+                    </div>`;
+                }
+                
+                if (data.country_code) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Country Code:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.country_code}${getSourceBadges('country_code')}</dd>
+                    </div>`;
+                }
+                
+                if (data.city) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">City:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.city}${getSourceBadges('city')}</dd>
+                    </div>`;
+                }
+                
+                if (data.region) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Region:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.region}${getSourceBadges('region')}</dd>
+                    </div>`;
+                }
+                
+                if (data.latitude && data.longitude) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Coordinates:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.latitude}, ${data.longitude}${getSourceBadges('latitude')}</dd>
+                    </div>`;
+                }
+                
+                if (data.timezone) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Timezone:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.timezone}${getSourceBadges('timezone')}</dd>
+                    </div>`;
+                }
+                
+                html += '</dl></div>';
+                
+                // Network Information
+                html += '<div>';
+                html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">🌐 Network Information</h4>';
+                html += '<dl class="space-y-2">';
+                
+                if (data.isp) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">ISP:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.isp}${getSourceBadges('isp')}</dd>
+                    </div>`;
+                }
+                
+                if (data.organization) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Organization:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.organization}${getSourceBadges('organization')}</dd>
+                    </div>`;
+                }
+                
+                if (data.autonomous_system_number) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">AS Number:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.autonomous_system_number}${getSourceBadges('autonomous_system_number')}</dd>
+                    </div>`;
+                }
+                
+                if (data.domain) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Domain:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.domain}${getSourceBadges('domain')}</dd>
+                    </div>`;
+                }
+                
+                if (data.connection_type) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Connection Type:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.connection_type}${getSourceBadges('connection_type')}</dd>
+                    </div>`;
+                }
+                
+                html += '</dl></div>';
+                
+                // Security Information
+                html += '<div>';
+                html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">🔒 Security Information</h4>';
+                html += '<dl class="space-y-2">';
+                
+                html += `<div class="flex items-center">
+                    <dt class="text-sm font-medium text-gray-500 w-32">Is Proxy:</dt>
+                    <dd class="text-sm flex items-center">${formatBoolean(data.is_proxy)}${getSourceBadges('is_proxy')}</dd>
+                </div>`;
+                
+                html += `<div class="flex items-center">
+                    <dt class="text-sm font-medium text-gray-500 w-32">Is VPN:</dt>
+                    <dd class="text-sm flex items-center">${formatBoolean(data.is_vpn)}${getSourceBadges('is_vpn')}</dd>
+                </div>`;
+                
+                if (data.is_tor !== undefined) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Is TOR:</dt>
+                        <dd class="text-sm flex items-center">${formatBoolean(data.is_tor)}${getSourceBadges('is_tor')}</dd>
+                    </div>`;
+                }
+                
+                if (data.is_datacenter !== undefined) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Is Datacenter:</dt>
+                        <dd class="text-sm flex items-center">${formatBoolean(data.is_datacenter)}${getSourceBadges('is_datacenter')}</dd>
+                    </div>`;
+                }
+                
+                if (data.proxy_type) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Proxy Type:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.proxy_type}${getSourceBadges('proxy_type')}</dd>
+                    </div>`;
+                }
+                
+                if (data.usage_type) {
+                    html += `<div class="flex items-center">
+                        <dt class="text-sm font-medium text-gray-500 w-32">Usage Type:</dt>
+                        <dd class="text-sm text-gray-900 flex items-center">${data.usage_type}${getSourceBadges('usage_type')}</dd>
+                    </div>`;
+                }
+                
+                html += '</dl></div>';
+                
+                // Available Databases
+                if (databases && Object.keys(databases).length > 0) {
+                    html += '<div>';
+                    html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">💾 Available Databases</h4>';
+                    html += '<div class="grid grid-cols-2 gap-2">';
+                    
+                    for (const [db, available] of Object.entries(databases)) {
+                        const dbName = db.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        const icon = available ? 
+                            '<span class="text-green-600">✓</span>' : 
+                            '<span class="text-gray-400">✗</span>';
+                        html += `<div class="text-sm">${icon} ${dbName}</div>`;
+                    }
+                    
+                    html += '</div></div>';
+                }
+                
+                html += '</div>';
+                return html;
+            },
+            
+            renderDatabaseTab(data) {
+                if (!data || data.error) return '<p class="text-gray-500">No data available</p>';
+                
+                const sources = data._database_sources || {};
+                
+                // Group data by source
+                const maxmindData = {};
+                const ip2locationData = {};
+                const ip2proxyData = {};
+                
+                for (const [field, source] of Object.entries(sources)) {
+                    if (field.startsWith('_')) continue;
+                    
+                    const value = data[field];
+                    if (value === null || value === undefined) continue;
+                    
+                    const sourceArray = Array.isArray(source) ? source : [source];
+                    
+                    sourceArray.forEach(s => {
+                        if (s.includes('MaxMind')) {
+                            maxmindData[field] = value;
+                        }
+                        if (s.includes('IP2Location')) {
+                            ip2locationData[field] = value;
+                        }
+                        if (s.includes('IP2Proxy')) {
+                            ip2proxyData[field] = value;
+                        }
+                    });
+                }
+                
+                let html = '<div class="space-y-6">';
+                
+                // MaxMind Section
+                if (Object.keys(maxmindData).length > 0) {
+                    html += '<div class="bg-blue-50 rounded-lg p-4">';
+                    html += '<h4 class="text-sm font-semibold text-blue-900 mb-3">MaxMind Databases</h4>';
+                    html += '<dl class="space-y-2">';
+                    
+                    for (const [field, value] of Object.entries(maxmindData)) {
+                        const label = this.formatKey(field);
+                        const displayValue = this.formatValue(value);
+                        html += `<div class="flex">
+                            <dt class="text-sm font-medium text-blue-700 w-40">${label}:</dt>
+                            <dd class="text-sm text-gray-900">${displayValue}</dd>
+                        </div>`;
+                    }
+                    
+                    html += '</dl></div>';
+                }
+                
+                // IP2Location Section
+                if (Object.keys(ip2locationData).length > 0) {
+                    html += '<div class="bg-green-50 rounded-lg p-4">';
+                    html += '<h4 class="text-sm font-semibold text-green-900 mb-3">IP2Location Databases</h4>';
+                    html += '<dl class="space-y-2">';
+                    
+                    for (const [field, value] of Object.entries(ip2locationData)) {
+                        const label = this.formatKey(field);
+                        const displayValue = this.formatValue(value);
+                        html += `<div class="flex">
+                            <dt class="text-sm font-medium text-green-700 w-40">${label}:</dt>
+                            <dd class="text-sm text-gray-900">${displayValue}</dd>
+                        </div>`;
+                    }
+                    
+                    html += '</dl></div>';
+                }
+                
+                // IP2Proxy Section
+                if (Object.keys(ip2proxyData).length > 0) {
+                    html += '<div class="bg-orange-50 rounded-lg p-4">';
+                    html += '<h4 class="text-sm font-semibold text-orange-900 mb-3">IP2Proxy Database</h4>';
+                    html += '<dl class="space-y-2">';
+                    
+                    for (const [field, value] of Object.entries(ip2proxyData)) {
+                        const label = this.formatKey(field);
+                        const displayValue = this.formatValue(value);
+                        html += `<div class="flex">
+                            <dt class="text-sm font-medium text-orange-700 w-40">${label}:</dt>
+                            <dd class="text-sm text-gray-900">${displayValue}</dd>
+                        </div>`;
+                    }
+                    
+                    html += '</dl></div>';
+                }
+                
+                html += '</div>';
+                return html;
             }
         }
     }
