@@ -70,3 +70,4 @@ test_data/
 # Docker API secrets (keep folder, ignore contents)
 infrastructure/docker-api/secrets/*
 !infrastructure/docker-api/secrets/.gitkeep
+/infrastructure/docker-api/.env.test
