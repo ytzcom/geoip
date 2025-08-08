@@ -1,10 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" :class="{ 'dark': isDarkMode }">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GeoIP Query Tool</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <style>
         [x-cloak] { display: none !important; }
@@ -30,25 +35,99 @@
         }
     </style>
 </head>
-<body class="bg-gray-50">
+<body class="bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
     <div x-data="geoipApp()" x-init="init()" class="container mx-auto px-4 py-8 max-w-7xl">
         <!-- Header -->
-        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <h1 class="text-3xl font-bold text-gray-800 mb-2">GeoIP Query Tool</h1>
-            <p class="text-gray-600">Look up geographic and network information for IP addresses</p>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-700/30 p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-2">GeoIP Query Tool</h1>
+                    <p class="text-gray-600 dark:text-gray-400">Look up geographic and network information for IP addresses</p>
+                </div>
+                
+                <!-- Theme Toggle -->
+                <div class="relative" x-data="{ showThemeMenu: false }">
+                    <button 
+                        @click="showThemeMenu = !showThemeMenu"
+                        class="p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                        :aria-label="'Theme: ' + theme">
+                        <!-- Sun icon (light mode) -->
+                        <svg x-show="theme === 'light'" class="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+                        </svg>
+                        
+                        <!-- Moon icon (dark mode) -->
+                        <svg x-show="theme === 'dark'" class="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                        </svg>
+                        
+                        <!-- Computer icon (system mode) -->
+                        <svg x-show="theme === 'system'" class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2.22l.123.489.804.804A1 1 0 0113 18H7a1 1 0 01-.707-1.707l.804-.804L7.22 15H5a2 2 0 01-2-2V5zm5.771 7H5V5h10v7H8.771z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+                    
+                    <!-- Theme Menu -->
+                    <div x-show="showThemeMenu" 
+                         @click.away="showThemeMenu = false"
+                         x-cloak
+                         class="absolute right-0 mt-2 w-36 bg-white dark:bg-gray-700 rounded-lg shadow-lg border border-gray-200 dark:border-gray-600 z-10">
+                        <div class="py-1">
+                            <button @click="setTheme('light'); showThemeMenu = false" 
+                                    class="w-full px-4 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between">
+                                <span class="flex items-center">
+                                    <svg class="w-4 h-4 mr-2 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+                                    </svg>
+                                    <span class="text-gray-700 dark:text-gray-200">Light</span>
+                                </span>
+                                <svg x-show="theme === 'light'" class="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </button>
+                            
+                            <button @click="setTheme('dark'); showThemeMenu = false" 
+                                    class="w-full px-4 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between">
+                                <span class="flex items-center">
+                                    <svg class="w-4 h-4 mr-2 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                                    </svg>
+                                    <span class="text-gray-700 dark:text-gray-200">Dark</span>
+                                </span>
+                                <svg x-show="theme === 'dark'" class="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </button>
+                            
+                            <button @click="setTheme('system'); showThemeMenu = false" 
+                                    class="w-full px-4 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between">
+                                <span class="flex items-center">
+                                    <svg class="w-4 h-4 mr-2 text-gray-500 dark:text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2.22l.123.489.804.804A1 1 0 0113 18H7a1 1 0 01-.707-1.707l.804-.804L7.22 15H5a2 2 0 01-2-2V5zm5.771 7H5V5h10v7H8.771z" clip-rule="evenodd"/>
+                                    </svg>
+                                    <span class="text-gray-700 dark:text-gray-200">System</span>
+                                </span>
+                                <svg x-show="theme === 'system'" class="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Authentication Section -->
-        <div x-show="!authenticated" x-cloak class="bg-white rounded-lg shadow-sm p-6 mb-6">
+        <div x-show="!authenticated" x-cloak class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-700/30 p-6 mb-6">
             <div class="max-w-md mx-auto">
-                <label class="block text-sm font-medium text-gray-700 mb-2">API Key Required</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API Key Required</label>
                 <div class="flex space-x-2">
                     <input 
                         type="password" 
                         x-model="apiKey" 
                         @keyup.enter="authenticate()"
                         placeholder="Enter your API key"
-                        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     <button 
                         @click="authenticate()"
                         class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
@@ -60,19 +139,19 @@
         </div>
 
         <!-- Query Section -->
-        <div x-show="authenticated" x-cloak class="bg-white rounded-lg shadow-sm p-6 mb-6">
+        <div x-show="authenticated" x-cloak class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-700/30 p-6 mb-6">
             <div class="space-y-4">
                 <!-- IP Input -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                         IP Addresses
-                        <span class="text-gray-500 font-normal">(one per line or comma-separated, max 50)</span>
+                        <span class="text-gray-500 dark:text-gray-400 font-normal">(one per line or comma-separated, max 50)</span>
                     </label>
                     <textarea 
                         x-model="ips" 
                         @keyup.ctrl.enter="queryIPs()"
                         placeholder="Enter IP addresses...&#10;e.g., 8.8.8.8&#10;1.1.1.1&#10;or 8.8.8.8, 1.1.1.1"
-                        class="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                        class="w-full h-32 px-4 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
                         :class="{'opacity-50': loading}"></textarea>
                 </div>
 
@@ -83,14 +162,14 @@
                             type="checkbox" 
                             x-model="fullData" 
                             class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                        <span class="ml-2 text-sm text-gray-700">Full Data</span>
-                        <span class="ml-1 text-xs text-gray-500">(includes all available fields)</span>
+                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Full Data</span>
+                        <span class="ml-1 text-xs text-gray-500 dark:text-gray-400">(includes all available fields)</span>
                     </label>
                     
                     <div class="flex items-center space-x-2">
                         <button 
                             @click="clearAll()"
-                            class="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors">
+                            class="px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors">
                             Clear
                         </button>
                         <button 
@@ -110,7 +189,7 @@
                 </div>
 
                 <!-- Stats -->
-                <div x-show="stats.total > 0" x-cloak class="text-sm text-gray-600">
+                <div x-show="stats.total > 0" x-cloak class="text-sm text-gray-600 dark:text-gray-400">
                     Queried: <span class="font-medium" x-text="stats.total"></span> IPs |
                     Found: <span class="font-medium text-green-600" x-text="stats.found"></span> |
                     Not Found: <span class="font-medium text-orange-600" x-text="stats.notFound"></span> |
@@ -120,15 +199,15 @@
         </div>
 
         <!-- Results Section -->
-        <div x-show="authenticated && results && Object.keys(results).length > 0" x-cloak class="bg-white rounded-lg shadow-sm p-6">
+        <div x-show="authenticated && results && Object.keys(results).length > 0" x-cloak class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-700/30 p-6">
             <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-semibold text-gray-800">Results</h2>
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-gray-100">Results</h2>
                 
                 <!-- Column Settings -->
                 <div class="relative" x-data="{ showSettings: false }">
                     <button 
                         @click="showSettings = !showSettings"
-                        class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center space-x-1">
+                        class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 flex items-center space-x-1">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -140,9 +219,9 @@
                     <div x-show="showSettings" 
                          @click.away="showSettings = false"
                          x-cloak
-                         class="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                         class="absolute right-0 mt-2 w-56 bg-white dark:bg-gray-700 rounded-lg shadow-lg border border-gray-200 dark:border-gray-600 z-10">
                         <div class="p-3">
-                            <div class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Visible Columns</div>
+                            <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Visible Columns</div>
                             <div class="space-y-2">
                                 <template x-for="col in columns" :key="col.key">
                                     <label class="flex items-center cursor-pointer">
@@ -151,8 +230,8 @@
                                             x-model="col.visible"
                                             :disabled="!col.toggleable"
                                             @change="saveColumnPreferences()"
-                                            class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50">
-                                        <span class="ml-2 text-sm text-gray-700" x-text="col.label"></span>
+                                            class="w-4 h-4 text-blue-600 border-gray-300 dark:border-gray-600 rounded focus:ring-blue-500 disabled:opacity-50">
+                                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="col.label"></span>
                                     </label>
                                 </template>
                             </div>
@@ -164,44 +243,44 @@
             <!-- Results Table -->
             <div class="w-full">
                 <table class="w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
                         <tr>
                             <template x-for="col in columns" :key="col.key">
                                 <th x-show="col.visible" 
-                                    class="px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider"
+                                    class="px-3 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
                                     :class="col.align === 'center' ? 'text-center' : 'text-left'"
                                     x-text="col.label"></th>
                             </template>
                         </tr>
                     </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
+                    <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                         <template x-for="(data, ip) in results" :key="ip">
-                            <tr class="hover:bg-gray-50">
+                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
                                 <!-- IP Address -->
-                                <td x-show="getColumn('ip').visible && !data.error" class="px-3 py-3 font-mono text-sm text-gray-900" x-text="ip"></td>
+                                <td x-show="getColumn('ip').visible && !data.error" class="px-3 py-3 font-mono text-sm text-gray-900 dark:text-gray-100" x-text="ip"></td>
                                 
                                 <!-- Country Code -->
-                                <td x-show="getColumn('country_code').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 w-20">
+                                <td x-show="getColumn('country_code').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 w-20">
                                     <span class="font-medium" x-text="data.country_code || '-'"></span>
                                 </td>
                                 
                                 <!-- Country Name -->
-                                <td x-show="getColumn('country_name').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                <td x-show="getColumn('country_name').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 dark:text-gray-100">
                                     <div class="truncate max-w-xs" :title="data.country || '-'" x-text="data.country || '-'"></div>
                                 </td>
                                 
                                 <!-- City -->
-                                <td x-show="getColumn('city').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                <td x-show="getColumn('city').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 dark:text-gray-100">
                                     <div class="truncate max-w-xs" :title="data.city || '-'" x-text="data.city || '-'"></div>
                                 </td>
                                 
                                 <!-- Region -->
-                                <td x-show="getColumn('region').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                <td x-show="getColumn('region').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 dark:text-gray-100">
                                     <div class="truncate max-w-xs" :title="data.region || '-'" x-text="data.region || '-'"></div>
                                 </td>
                                 
                                 <!-- ISP -->
-                                <td x-show="getColumn('isp').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                <td x-show="getColumn('isp').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 dark:text-gray-100">
                                     <div class="truncate max-w-xs" :title="data.isp || data.organization || '-'" x-text="data.isp || data.organization || '-'"></div>
                                 </td>
                                 
@@ -210,12 +289,12 @@
                                     <div class="flex flex-wrap gap-1">
                                         <span x-show="data.is_proxy" class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Proxy</span>
                                         <span x-show="data.is_vpn" class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">VPN</span>
-                                        <span x-show="!data.is_proxy && !data.is_vpn" class="text-gray-500">-</span>
+                                        <span x-show="!data.is_proxy && !data.is_vpn" class="text-gray-500 dark:text-gray-400">-</span>
                                     </div>
                                 </td>
                                 
                                 <!-- Usage Type -->
-                                <td x-show="getColumn('usage_type').visible && !data.error" class="px-3 py-3 text-sm text-gray-900">
+                                <td x-show="getColumn('usage_type').visible && !data.error" class="px-3 py-3 text-sm text-gray-900 dark:text-gray-100">
                                     <div class="truncate max-w-xs" :title="data.usage_type || '-'" x-text="data.usage_type || '-'"></div>
                                 </td>
                                 
@@ -223,7 +302,7 @@
                                 <td x-show="getColumn('actions').visible && !data.error" class="px-3 py-3 text-center text-sm">
                                     <button 
                                         @click="viewDetails(ip, data)"
-                                        class="text-blue-600 hover:text-blue-800">
+                                        class="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300">
                                         Details
                                     </button>
                                 </td>
@@ -248,30 +327,30 @@
                     <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
                 </div>
 
-                <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
-                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                        <h3 class="text-lg font-medium text-gray-900 mb-4">
+                <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+                    <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
                             IP Details: <span class="font-mono" x-text="modalData.ip"></span>
                         </h3>
                         
                         <!-- Tabs -->
-                        <div class="border-b border-gray-200 mb-4">
+                        <div class="border-b border-gray-200 dark:border-gray-700 mb-4">
                             <nav class="-mb-px flex space-x-8">
                                 <button 
                                     @click="activeTab = 'overview'"
-                                    :class="activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                                    :class="activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'"
                                     class="py-2 px-1 border-b-2 font-medium text-sm">
                                     Overview
                                 </button>
                                 <button 
                                     @click="activeTab = 'database'"
-                                    :class="activeTab === 'database' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                                    :class="activeTab === 'database' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'"
                                     class="py-2 px-1 border-b-2 font-medium text-sm">
                                     By Database
                                 </button>
                                 <button 
                                     @click="activeTab = 'raw'"
-                                    :class="activeTab === 'raw' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                                    :class="activeTab === 'raw' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'"
                                     class="py-2 px-1 border-b-2 font-medium text-sm">
                                     Raw JSON
                                 </button>
@@ -287,20 +366,28 @@
                             <div x-show="activeTab === 'database'" x-html="renderDatabaseTab(modalData.data)"></div>
                             
                             <!-- Raw JSON Tab -->
-                            <div x-show="activeTab === 'raw'" class="bg-gray-50 rounded-lg p-4">
-                                <pre class="text-xs font-mono text-gray-700 whitespace-pre-wrap break-words" x-text="JSON.stringify(modalData.data, null, 2)"></pre>
+                            <div x-show="activeTab === 'raw'" class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                                <pre class="text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words" x-text="JSON.stringify(modalData.data, null, 2)"></pre>
                             </div>
                         </div>
                     </div>
-                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <div class="bg-gray-50 dark:bg-gray-900 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                         <button 
                             @click="copyToClipboard(modalData.data)"
-                            class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm">
-                            Copy JSON
+                            :class="copySuccess ? 
+                                'w-full inline-flex justify-center rounded-md border border-green-500 dark:border-green-400 shadow-sm px-4 py-2 bg-green-50 dark:bg-green-900/20 text-base font-medium text-green-700 dark:text-green-300 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm transition-colors' : 
+                                'w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-gray-700 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm transition-colors'">
+                            <span x-show="!copySuccess">Copy JSON</span>
+                            <span x-show="copySuccess" class="flex items-center">
+                                <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Copied!
+                            </span>
                         </button>
                         <button 
                             @click="showModal = false"
-                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm">
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-gray-700 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm">
                             Close
                         </button>
                     </div>
@@ -312,6 +399,11 @@
     <script>
     function geoipApp() {
         return {
+            // Theme management
+            theme: 'system',
+            isDarkMode: false,
+            
+            // App state
             apiKey: '',
             authenticated: false,
             authError: '',
@@ -321,6 +413,7 @@
             results: null,
             showModal: false,
             modalData: {},
+            copySuccess: false,
             stats: {
                 total: 0,
                 found: 0,
@@ -340,6 +433,9 @@
             ],
             
             init() {
+                // Initialize theme
+                this.initTheme();
+                
                 // Load column preferences from localStorage
                 const savedColumns = localStorage.getItem('geoip_column_preferences');
                 if (savedColumns) {
@@ -370,6 +466,49 @@
                     if (this.authenticated) {
                         this.queryIPs();
                     }
+                }
+            },
+            
+            // Theme management functions
+            initTheme() {
+                // Load saved theme preference
+                const savedTheme = localStorage.getItem('geoip_theme') || 'system';
+                this.theme = savedTheme;
+                this.applyTheme();
+                
+                // Listen for system theme changes
+                const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+                mediaQuery.addEventListener('change', () => {
+                    if (this.theme === 'system') {
+                        this.applyTheme();
+                    }
+                });
+            },
+            
+            setTheme(theme) {
+                this.theme = theme;
+                localStorage.setItem('geoip_theme', theme);
+                this.applyTheme();
+            },
+            
+            applyTheme() {
+                let isDark = false;
+                
+                if (this.theme === 'dark') {
+                    isDark = true;
+                } else if (this.theme === 'light') {
+                    isDark = false;
+                } else if (this.theme === 'system') {
+                    isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                }
+                
+                this.isDarkMode = isDark;
+                
+                // Apply dark class to html element
+                if (isDark) {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
                 }
             },
             
@@ -495,9 +634,13 @@
             async copyToClipboard(data) {
                 try {
                     await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-                    alert('Copied to clipboard!');
+                    this.copySuccess = true;
+                    // Reset after 2 seconds
+                    setTimeout(() => {
+                        this.copySuccess = false;
+                    }, 2000);
                 } catch (error) {
-                    alert('Failed to copy');
+                    console.error('Failed to copy:', error);
                 }
             },
             
@@ -508,7 +651,7 @@
             },
             
             renderOverviewTab(data) {
-                if (!data || data.error) return '<p class="text-gray-500">No data available</p>';
+                if (!data || data.error) return '<p class="text-gray-500 dark:text-gray-400">No data available</p>';
                 
                 const sources = data._database_sources || {};
                 const databases = data._databases_available || {};
@@ -525,63 +668,63 @@
                         else if (source.includes('IP2Location')) color = 'green';
                         else if (source.includes('IP2Proxy')) color = 'orange';
                         
-                        return `<span class="ml-2 px-2 py-1 text-xs rounded-full bg-${color}-100 text-${color}-800">${source}</span>`;
+                        return `<span class="ml-2 px-2 py-1 text-xs rounded-full bg-${color}-100 dark:bg-${color}-900/30 text-${color}-800 dark:text-${color}-200">${source}</span>`;
                     }).join('');
                 };
                 
                 // Helper function to format boolean values
                 const formatBoolean = (value) => {
                     return value ? 
-                        '<span class="text-green-600">✓ Yes</span>' : 
-                        '<span class="text-gray-400">✗ No</span>';
+                        '<span class="text-green-600 dark:text-green-400">✓ Yes</span>' : 
+                        '<span class="text-gray-400 dark:text-gray-500">✗ No</span>';
                 };
                 
                 let html = '<div class="space-y-6">';
                 
                 // Location Information
                 html += '<div>';
-                html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">📍 Location Information</h4>';
+                html += '<h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">📍 Location Information</h4>';
                 html += '<dl class="space-y-2">';
                 
                 if (data.country) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Country:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.country}${getSourceBadges('country')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Country:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.country}${getSourceBadges('country')}</dd>
                     </div>`;
                 }
                 
                 if (data.country_code) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Country Code:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.country_code}${getSourceBadges('country_code')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Country Code:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.country_code}${getSourceBadges('country_code')}</dd>
                     </div>`;
                 }
                 
                 if (data.city) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">City:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.city}${getSourceBadges('city')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">City:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.city}${getSourceBadges('city')}</dd>
                     </div>`;
                 }
                 
                 if (data.region) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Region:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.region}${getSourceBadges('region')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Region:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.region}${getSourceBadges('region')}</dd>
                     </div>`;
                 }
                 
                 if (data.latitude && data.longitude) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Coordinates:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.latitude}, ${data.longitude}${getSourceBadges('latitude')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Coordinates:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.latitude}, ${data.longitude}${getSourceBadges('latitude')}</dd>
                     </div>`;
                 }
                 
                 if (data.timezone) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Timezone:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.timezone}${getSourceBadges('timezone')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Timezone:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.timezone}${getSourceBadges('timezone')}</dd>
                     </div>`;
                 }
                 
@@ -589,41 +732,41 @@
                 
                 // Network Information
                 html += '<div>';
-                html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">🌐 Network Information</h4>';
+                html += '<h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">🌐 Network Information</h4>';
                 html += '<dl class="space-y-2">';
                 
                 if (data.isp) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">ISP:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.isp}${getSourceBadges('isp')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">ISP:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.isp}${getSourceBadges('isp')}</dd>
                     </div>`;
                 }
                 
                 if (data.organization) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Organization:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.organization}${getSourceBadges('organization')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Organization:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.organization}${getSourceBadges('organization')}</dd>
                     </div>`;
                 }
                 
                 if (data.autonomous_system_number) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">AS Number:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.autonomous_system_number}${getSourceBadges('autonomous_system_number')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">AS Number:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.autonomous_system_number}${getSourceBadges('autonomous_system_number')}</dd>
                     </div>`;
                 }
                 
                 if (data.domain) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Domain:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.domain}${getSourceBadges('domain')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Domain:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.domain}${getSourceBadges('domain')}</dd>
                     </div>`;
                 }
                 
                 if (data.connection_type) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Connection Type:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.connection_type}${getSourceBadges('connection_type')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Connection Type:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.connection_type}${getSourceBadges('connection_type')}</dd>
                     </div>`;
                 }
                 
@@ -631,44 +774,44 @@
                 
                 // Security Information
                 html += '<div>';
-                html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">🔒 Security Information</h4>';
+                html += '<h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">🔒 Security Information</h4>';
                 html += '<dl class="space-y-2">';
                 
                 html += `<div class="flex items-center">
-                    <dt class="text-sm font-medium text-gray-500 w-32">Is Proxy:</dt>
+                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Is Proxy:</dt>
                     <dd class="text-sm flex items-center">${formatBoolean(data.is_proxy)}${getSourceBadges('is_proxy')}</dd>
                 </div>`;
                 
                 html += `<div class="flex items-center">
-                    <dt class="text-sm font-medium text-gray-500 w-32">Is VPN:</dt>
+                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Is VPN:</dt>
                     <dd class="text-sm flex items-center">${formatBoolean(data.is_vpn)}${getSourceBadges('is_vpn')}</dd>
                 </div>`;
                 
                 if (data.is_tor !== undefined) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Is TOR:</dt>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Is TOR:</dt>
                         <dd class="text-sm flex items-center">${formatBoolean(data.is_tor)}${getSourceBadges('is_tor')}</dd>
                     </div>`;
                 }
                 
                 if (data.is_datacenter !== undefined) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Is Datacenter:</dt>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Is Datacenter:</dt>
                         <dd class="text-sm flex items-center">${formatBoolean(data.is_datacenter)}${getSourceBadges('is_datacenter')}</dd>
                     </div>`;
                 }
                 
                 if (data.proxy_type) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Proxy Type:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.proxy_type}${getSourceBadges('proxy_type')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Proxy Type:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.proxy_type}${getSourceBadges('proxy_type')}</dd>
                     </div>`;
                 }
                 
                 if (data.usage_type) {
                     html += `<div class="flex items-center">
-                        <dt class="text-sm font-medium text-gray-500 w-32">Usage Type:</dt>
-                        <dd class="text-sm text-gray-900 flex items-center">${data.usage_type}${getSourceBadges('usage_type')}</dd>
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 w-32">Usage Type:</dt>
+                        <dd class="text-sm text-gray-900 dark:text-gray-100 flex items-center">${data.usage_type}${getSourceBadges('usage_type')}</dd>
                     </div>`;
                 }
                 
@@ -677,15 +820,15 @@
                 // Available Databases
                 if (databases && Object.keys(databases).length > 0) {
                     html += '<div>';
-                    html += '<h4 class="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b">💾 Available Databases</h4>';
+                    html += '<h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">💾 Available Databases</h4>';
                     html += '<div class="grid grid-cols-2 gap-2">';
                     
                     for (const [db, available] of Object.entries(databases)) {
                         const dbName = db.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                         const icon = available ? 
-                            '<span class="text-green-600">✓</span>' : 
-                            '<span class="text-gray-400">✗</span>';
-                        html += `<div class="text-sm">${icon} ${dbName}</div>`;
+                            '<span class="text-green-600 dark:text-green-400">✓</span>' : 
+                            '<span class="text-gray-400 dark:text-gray-500">✗</span>';
+                        html += `<div class="text-sm text-gray-900 dark:text-gray-100">${icon} ${dbName}</div>`;
                     }
                     
                     html += '</div></div>';
@@ -696,7 +839,7 @@
             },
             
             renderDatabaseTab(data) {
-                if (!data || data.error) return '<p class="text-gray-500">No data available</p>';
+                if (!data || data.error) return '<p class="text-gray-500 dark:text-gray-400">No data available</p>';
                 
                 const sources = data._database_sources || {};
                 
@@ -730,16 +873,16 @@
                 
                 // MaxMind Section
                 if (Object.keys(maxmindData).length > 0) {
-                    html += '<div class="bg-blue-50 rounded-lg p-4">';
-                    html += '<h4 class="text-sm font-semibold text-blue-900 mb-3">MaxMind Databases</h4>';
+                    html += '<div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">';
+                    html += '<h4 class="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-3">MaxMind Databases</h4>';
                     html += '<dl class="space-y-2">';
                     
                     for (const [field, value] of Object.entries(maxmindData)) {
                         const label = this.formatKey(field);
                         const displayValue = this.formatValue(value);
                         html += `<div class="flex">
-                            <dt class="text-sm font-medium text-blue-700 w-40">${label}:</dt>
-                            <dd class="text-sm text-gray-900">${displayValue}</dd>
+                            <dt class="text-sm font-medium text-blue-700 dark:text-blue-300 w-40">${label}:</dt>
+                            <dd class="text-sm text-gray-900 dark:text-gray-100">${displayValue}</dd>
                         </div>`;
                     }
                     
@@ -748,16 +891,16 @@
                 
                 // IP2Location Section
                 if (Object.keys(ip2locationData).length > 0) {
-                    html += '<div class="bg-green-50 rounded-lg p-4">';
-                    html += '<h4 class="text-sm font-semibold text-green-900 mb-3">IP2Location Databases</h4>';
+                    html += '<div class="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">';
+                    html += '<h4 class="text-sm font-semibold text-green-900 dark:text-green-100 mb-3">IP2Location Databases</h4>';
                     html += '<dl class="space-y-2">';
                     
                     for (const [field, value] of Object.entries(ip2locationData)) {
                         const label = this.formatKey(field);
                         const displayValue = this.formatValue(value);
                         html += `<div class="flex">
-                            <dt class="text-sm font-medium text-green-700 w-40">${label}:</dt>
-                            <dd class="text-sm text-gray-900">${displayValue}</dd>
+                            <dt class="text-sm font-medium text-green-700 dark:text-green-300 w-40">${label}:</dt>
+                            <dd class="text-sm text-gray-900 dark:text-gray-100">${displayValue}</dd>
                         </div>`;
                     }
                     
@@ -766,16 +909,16 @@
                 
                 // IP2Proxy Section
                 if (Object.keys(ip2proxyData).length > 0) {
-                    html += '<div class="bg-orange-50 rounded-lg p-4">';
-                    html += '<h4 class="text-sm font-semibold text-orange-900 mb-3">IP2Proxy Database</h4>';
+                    html += '<div class="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4">';
+                    html += '<h4 class="text-sm font-semibold text-orange-900 dark:text-orange-100 mb-3">IP2Proxy Database</h4>';
                     html += '<dl class="space-y-2">';
                     
                     for (const [field, value] of Object.entries(ip2proxyData)) {
                         const label = this.formatKey(field);
                         const displayValue = this.formatValue(value);
                         html += `<div class="flex">
-                            <dt class="text-sm font-medium text-orange-700 w-40">${label}:</dt>
-                            <dd class="text-sm text-gray-900">${displayValue}</dd>
+                            <dt class="text-sm font-medium text-orange-700 dark:text-orange-300 w-40">${label}:</dt>
+                            <dd class="text-sm text-gray-900 dark:text-gray-100">${displayValue}</dd>
                         </div>`;
                     }
                     
