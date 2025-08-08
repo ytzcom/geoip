@@ -14,20 +14,26 @@ Databases are automatically updated **every Monday at midnight UTC**.
 
 ## 🚀 Quick Start
 
-### Docker Integration (2 Lines!)
+### Docker Integration - Automatic Everything! 🎯
 
-For ANY Docker project, add these 2 lines to your Dockerfile:
+Add these 2 lines to ANY Dockerfile and databases download automatically on first run:
 
 ```dockerfile
-# Copy GeoIP scripts
 FROM ytzcom/geoip-scripts:latest as geoip
 COPY --from=geoip /opt/geoip /opt/geoip
 ```
 
 Then in your entrypoint:
 ```sh
-. /opt/geoip/entrypoint-helper.sh && geoip_init
+. /opt/geoip/entrypoint-helper.sh && geoip_init && exec your-app
 ```
+
+**What happens automatically:**
+- ✅ **First run**: Downloads all databases (if missing)
+- ✅ **Validates**: Ensures databases are valid MMDB/BIN files  
+- ✅ **Sets up cron**: Auto-updates daily at 2 AM
+- ✅ **Persists**: Databases survive container restarts (use volumes)
+- ✅ **Retries**: 3 attempts with 5-second delays on failure
 
 ### One-Line Linux Installer
 
@@ -69,6 +75,26 @@ cd geoip-updater/scripts/cli
 python geoip-update.py -k YOUR_API_KEY   # Python (cross-platform)
 ./geoip-update.ps1 -ApiKey YOUR_API_KEY  # PowerShell (Windows)
 ```
+
+## 🔄 How Docker Integration Works
+
+### First Container Start
+1. **Automatic Detection**: Checks if databases exist in `GEOIP_TARGET_DIR`
+2. **Initial Download**: If missing, downloads all configured databases
+3. **Validation**: Verifies each database can be opened and queried
+4. **Cron Setup**: Installs daily updates (auto-detects: supercronic/crond/cron/systemd)
+5. **Ready**: Your app starts with fresh databases
+
+### Container Restarts
+- Databases persist in volumes - no re-download needed
+- Cron scheduler resumes automatically
+- Health checks verify database integrity
+
+### Automatic Updates
+- Runs daily at 2 AM (configurable via `GEOIP_UPDATE_SCHEDULE`)
+- Updates happen in background - zero downtime
+- Failed updates retry 3 times before logging error
+- Logs written to `/var/log/geoip-update.log` (when writable)
 
 ## 📊 Database Information
 
@@ -407,17 +433,17 @@ export GEOIP_API_KEY=your-api-key
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GEOIP_API_KEY` | **Required** - Your API key | - |
-| `GEOIP_TARGET_DIR` | Where to store databases | `/app/resources/geoip` |
-| `GEOIP_API_ENDPOINT` | API endpoint URL | `https://geoipdb.net/auth` |
-| `GEOIP_DOWNLOAD_ON_START` | Download on container start | `true` |
-| `GEOIP_VALIDATE_ON_START` | Validate on start | `true` |
-| `GEOIP_SETUP_CRON` | Setup automatic updates | `true` |
-| `GEOIP_UPDATE_SCHEDULE` | Cron schedule | `0 2 * * *` (2 AM daily) |
-| `GEOIP_FAIL_ON_ERROR` | Exit on initialization error | `false` |
-| `GEOIP_DATABASES` | Specific databases or "all" | `all` |
+| Variable | Default | Effect |
+|----------|---------|--------|
+| **GEOIP_API_KEY** | (required) | Your authentication key |
+| **GEOIP_TARGET_DIR** | `/app/resources/geoip` | Where databases are stored |
+| **GEOIP_API_ENDPOINT** | `https://geoipdb.net/auth` | API endpoint URL |
+| **GEOIP_DOWNLOAD_ON_START** | `true` | Downloads missing databases on container start |
+| **GEOIP_VALIDATE_ON_START** | `true` | Validates databases can be opened |
+| **GEOIP_SETUP_CRON** | `true` | Installs automatic daily updates |
+| **GEOIP_UPDATE_SCHEDULE** | `0 2 * * *` | Cron schedule (2 AM daily) |
+| **GEOIP_FAIL_ON_ERROR** | `false` | Exit container if download fails |
+| **GEOIP_DATABASES** | `all` | Comma-separated list or "all" |
 
 ### Health Checks
 
@@ -487,188 +513,134 @@ docker run -d \
 # Enter target host and branch to deploy
 ```
 
-## 🔧 Usage Examples
+## 📦 Ready-to-Use Docker Examples
 
-### Python (with geoip2)
+### Example 1: Simple Web App
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
 
-```python
-import geoip2.database
+# Add GeoIP integration (2 lines!)
+FROM ytzcom/geoip-scripts:latest as geoip
+COPY --from=geoip /opt/geoip /opt/geoip
 
-# Load the database
-reader = geoip2.database.Reader('GeoIP2-City.mmdb')
+# Your app
+COPY . .
+RUN npm ci --production
 
-# Lookup an IP
-response = reader.city('8.8.8.8')
-print(f"Country: {response.country.name}")
-print(f"City: {response.city.name}")
-print(f"Latitude: {response.location.latitude}")
-print(f"Longitude: {response.location.longitude}")
+# Configure GeoIP
+ENV GEOIP_API_KEY=${GEOIP_API_KEY} \
+    GEOIP_TARGET_DIR=/app/data/geoip
 
-reader.close()
+# Start with GeoIP initialization
+CMD sh -c '. /opt/geoip/entrypoint-helper.sh && geoip_init && node server.js'
 ```
 
-### Python (with IP2Location)
+### Example 2: Production with Health Checks
+```dockerfile
+FROM python:3.11-slim
 
-```python
-import IP2Location
+# GeoIP integration
+FROM ytzcom/geoip-scripts:latest as geoip
+COPY --from=geoip /opt/geoip /opt/geoip
 
-# Load the database
-db = IP2Location.IP2Location('IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN')
+WORKDIR /app
+COPY . .
+RUN pip install -r requirements.txt
 
-# Lookup an IP
-result = db.get_all('8.8.8.8')
-print(f"Country: {result.country_long}")
-print(f"City: {result.city}")
-print(f"ISP: {result.isp}")
+ENV GEOIP_API_KEY=${GEOIP_API_KEY} \
+    GEOIP_TARGET_DIR=/app/geoip \
+    GEOIP_FAIL_ON_ERROR=true
+
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD sh -c '. /opt/geoip/entrypoint-helper.sh && geoip_health_check'
+
+CMD ["sh", "-c", ". /opt/geoip/entrypoint-helper.sh && geoip_init && python app.py"]
 ```
 
-### Python (with IP2Proxy)
+### Example 3: Docker Compose with Volumes
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    environment:
+      GEOIP_API_KEY: ${GEOIP_API_KEY}
+      GEOIP_TARGET_DIR: /data/geoip
+      GEOIP_UPDATE_SCHEDULE: "0 3 * * *"  # 3 AM daily
+    volumes:
+      - geoip-data:/data/geoip  # Persists across restarts
+    healthcheck:
+      test: ["CMD", "sh", "-c", ". /opt/geoip/entrypoint-helper.sh && geoip_health_check"]
+      interval: 30s
 
-```python
-import IP2Proxy
-
-# Load the database
-db = IP2Proxy.IP2Proxy('IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN')
-
-# Check if IP is a proxy
-result = db.get_all('8.8.8.8')
-print(f"Is Proxy: {result.is_proxy}")
-print(f"Proxy Type: {result.proxy_type}")
-print(f"Country: {result.country_long}")
+volumes:
+  geoip-data:  # Named volume for persistence
 ```
 
-### PHP (with GeoIP2)
+### Example 4: Minimal - Just Download Once
+```bash
+# One-time download to current directory
+docker run --rm \
+  -e GEOIP_API_KEY=your-api-key \
+  -v $(pwd)/geoip:/data \
+  ytzcom/geoip-updater:latest
 
-```php
-<?php
-require_once 'vendor/autoload.php';
-use GeoIp2\Database\Reader;
-
-// Load the database
-$reader = new Reader('GeoIP2-City.mmdb');
-
-// Lookup an IP
-$record = $reader->city('8.8.8.8');
-echo "Country: " . $record->country->name . "\n";
-echo "City: " . $record->city->name . "\n";
-echo "Latitude: " . $record->location->latitude . "\n";
-echo "Longitude: " . $record->location->longitude . "\n";
-
-// Close the reader (not required, but recommended)
-$reader->close();
-?>
+# Your databases are now in ./geoip/
 ```
 
-### PHP (with IP2Location)
-
-```php
-<?php
-require_once 'vendor/autoload.php';
-use IP2Location\Database;
-
-// Load the database
-$db = new Database('IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN', IP2Location\Database::FILE_IO);
-
-// Lookup an IP
-$records = $db->lookup('8.8.8.8', IP2Location\Database::ALL);
-echo "Country: " . $records['countryLong'] . "\n";
-echo "City: " . $records['city'] . "\n";
-echo "ISP: " . $records['isp'] . "\n";
-?>
+### Example 5: Custom Database Selection
+```dockerfile
+# Only download specific databases, no auto-updates
+ENV GEOIP_DATABASES="GeoIP2-City.mmdb,GeoIP2-Country.mmdb" \
+    GEOIP_DOWNLOAD_ON_START=true \
+    GEOIP_SETUP_CRON=false  # No auto-updates
 ```
 
-### Laravel (with GeoIP)
+## 🔍 Troubleshooting Docker Integration
 
-```php
-<?php
-namespace App\Http\Controllers;
+### Databases Not Downloading
+```bash
+# Check your API key
+docker exec your-container sh -c 'echo $GEOIP_API_KEY'
 
-use Illuminate\Http\Request;
-use Torann\GeoIP\Facades\GeoIP;
+# Test download manually
+docker exec your-container sh -c '/opt/geoip/geoip-update.sh'
 
-class LocationController extends Controller
-{
-    public function getLocation(Request $request)
-    {
-        // Get client IP or use a specific IP
-        $ip = $request->ip() ?? '8.8.8.8';
-        
-        // Get location data
-        $location = GeoIP::getLocation($ip);
-        
-        return response()->json([
-            'country' => $location['country'],
-            'city' => $location['city'],
-            'latitude' => $location['lat'],
-            'longitude' => $location['lon'],
-            'timezone' => $location['timezone']
-        ]);
-    }
-}
-?>
+# Check logs
+docker logs your-container | grep GeoIP
 ```
 
-## 🛠️ Integration
+### Cron Not Running
+```bash
+# Check cron status
+docker exec your-container sh -c 'pgrep -a cron'
 
-### CDN/CloudFront Integration
-
-```javascript
-// Example CloudFront function
-const geoip = require('geoip-lite');
-
-exports.handler = async (event) => {
-    const request = event.Records[0].cf.request;
-    const clientIp = request.clientIp;
-    
-    const geo = geoip.lookup(clientIp);
-    if (geo) {
-        request.headers['cloudfront-viewer-country'] = [{
-            key: 'CloudFront-Viewer-Country',
-            value: geo.country
-        }];
-    }
-    
-    return request;
-};
+# View cron logs
+docker exec your-container sh -c 'cat /var/log/geoip-update.log'
 ```
 
-### Nginx Integration
-
-```nginx
-# Load MaxMind module
-load_module modules/ngx_http_geoip2_module.so;
-
-http {
-    # Define GeoIP2 databases
-    geoip2 /path/to/GeoIP2-City.mmdb {
-        auto_reload 60m;
-        $geoip2_city_country_code country iso_code;
-        $geoip2_city_name city names en;
-    }
-    
-    # Use in server block
-    server {
-        location / {
-            add_header X-Country-Code $geoip2_city_country_code;
-            add_header X-City $geoip2_city_name;
-        }
-    }
-}
+### Databases Missing After Restart
+**Solution**: Use Docker volumes to persist data:
+```yaml
+volumes:
+  - geoip-data:/app/resources/geoip  # ✅ Persists
+  # NOT: ./geoip:/app/resources/geoip  # ❌ May not persist
 ```
+
+## 🔧 Database Usage
+
+For code examples on how to use the downloaded databases in various programming languages (Python, PHP, Node.js, Go, etc.), see [USAGE_EXAMPLES.md](USAGE_EXAMPLES.md).
 
 ## 📋 Requirements
 
-To use these databases in your applications, you'll need:
+To use our download scripts, you need:
 
-- **MaxMind databases**: `geoip2` Python library or equivalent
-- **IP2Location databases**: `IP2Location` Python library or equivalent
-- **IP2Proxy databases**: `IP2Proxy` Python library or equivalent
-
-Install Python libraries:
-
-```bash
-pip install geoip2 IP2Location IP2Proxy
-```
+- **API Key**: Get your key from the authentication service
+- **Docker** (for Docker integration) OR
+- **Python 3.7+** (for Python script) OR  
+- **Bash/Shell** (for shell script) OR
+- **PowerShell** (for Windows)
 
 ## 📖 Configuration
 
