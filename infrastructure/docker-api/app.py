@@ -39,9 +39,9 @@ logger = logging.getLogger(__name__)
 # Load settings
 settings = get_settings()
 
-# Initialize S3 client if in S3 mode
+# Initialize S3 client if using S3 URLs
 s3_client = None
-if settings.storage_mode in ['s3', 'hybrid']:
+if settings.use_s3_urls:
     if settings.aws_access_key_id and settings.aws_secret_access_key:
         s3_client = boto3.client(
             's3',
@@ -83,18 +83,17 @@ async def lifespan(app: FastAPI):
     
     # Startup
     logger.info(f"Starting GeoIP API Server")
-    logger.info(f"Storage Mode: {settings.storage_mode}")
+    logger.info(f"Download URLs: {'S3 pre-signed' if settings.use_s3_urls else 'Local file serving'}")
     logger.info(f"API Keys configured: {len(settings.api_keys)}")
     logger.info(f"Cache Type: {settings.cache_type}")
     
-    if settings.storage_mode in ['local', 'hybrid']:
-        # Verify local data path exists
-        if not Path(settings.local_data_path).exists():
-            logger.warning(f"Local data path does not exist: {settings.local_data_path}")
-            Path(settings.local_data_path).mkdir(parents=True, exist_ok=True)
-            logger.info(f"Created local data path: {settings.local_data_path}")
+    # Always verify database path exists (needed for query functionality)
+    if not Path(settings.database_path).exists():
+        logger.warning(f"Database path does not exist: {settings.database_path}")
+        Path(settings.database_path).mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created database path: {settings.database_path}")
         
-        # Check if databases exist, download if not
+    # Check if databases exist, download if not
         db_path = Path(settings.database_path) / 'raw'
         maxmind_path = db_path / 'maxmind'
         ip2location_path = db_path / 'ip2location'
@@ -130,13 +129,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize GeoIP reader: {e}")
         logger.warning("GeoIP query functionality will not be available")
     
-    # Schedule database updates
-    if settings.storage_mode in ['local', 'hybrid']:
-        # Parse cron schedule
-        cron_parts = settings.database_update_schedule.split()
-        if len(cron_parts) == 5:
-            minute, hour, day, month, day_of_week = cron_parts
-            scheduler.add_job(
+    # Schedule database updates (always needed since we maintain local copies)
+    # Parse cron schedule
+    cron_parts = settings.database_update_schedule.split()
+    if len(cron_parts) == 5:
+        minute, hour, day, month, day_of_week = cron_parts
+        scheduler.add_job(
                 update_databases,
                 CronTrigger(
                     minute=minute,
@@ -149,10 +147,10 @@ async def lifespan(app: FastAPI):
                 name='Update GeoIP databases from S3',
                 misfire_grace_time=3600  # 1 hour grace time
             )
-            scheduler.start()
-            logger.info(f"Scheduled database updates: {settings.database_update_schedule}")
-        else:
-            logger.warning(f"Invalid cron schedule: {settings.database_update_schedule}")
+        scheduler.start()
+        logger.info(f"Scheduled database updates: {settings.database_update_schedule}")
+    else:
+        logger.warning(f"Invalid cron schedule: {settings.database_update_schedule}")
     
     yield
     
@@ -207,7 +205,7 @@ class DatabaseRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     timestamp: str
-    storage_mode: str
+    use_s3_urls: bool
     databases_available: int
     databases_local: int
     databases_remote: int
@@ -244,7 +242,7 @@ def get_local_file_url(database_name: str, request: Request) -> Optional[str]:
     
     # Check if file exists locally
     relative_path = AVAILABLE_DATABASES[database_name]
-    local_file = Path(settings.local_data_path) / relative_path
+    local_file = Path(settings.database_path) / relative_path
     
     if local_file.exists():
         # Generate download URL
@@ -277,7 +275,7 @@ def generate_s3_presigned_url(database_name: str) -> Optional[str]:
 
 
 def generate_database_urls(databases: List[str], request: Request) -> Dict[str, str]:
-    """Generate URLs for requested databases based on storage mode."""
+    """Generate URLs for requested databases based on configuration."""
     urls = {}
     
     for db_name in databases:
@@ -286,19 +284,12 @@ def generate_database_urls(databases: List[str], request: Request) -> Dict[str, 
         
         url = None
         
-        if settings.storage_mode == 'local':
-            # Local file serving only
-            url = get_local_file_url(db_name, request)
-        
-        elif settings.storage_mode == 's3':
-            # S3 pre-signed URLs only
+        if settings.use_s3_urls:
+            # Generate S3 pre-signed URLs for scalability
             url = generate_s3_presigned_url(db_name)
-        
-        elif settings.storage_mode == 'hybrid':
-            # Try local first, fallback to S3
+        else:
+            # Serve files directly from local storage
             url = get_local_file_url(db_name, request)
-            if not url:
-                url = generate_s3_presigned_url(db_name)
         
         if url:
             urls[db_name] = url
@@ -360,7 +351,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        storage_mode=settings.storage_mode,
+        use_s3_urls=settings.use_s3_urls,
         databases_available=total_available,
         databases_local=local_count,
         databases_remote=remote_count
@@ -430,10 +421,7 @@ async def download_database(
     database_name: str,
     x_api_key: Optional[str] = Header(None)
 ):
-    """Direct file download endpoint for local storage mode."""
-    if settings.storage_mode not in ['local', 'hybrid']:
-        raise HTTPException(status_code=404, detail="Download endpoint not available in S3 mode")
-    
+    """Direct file download endpoint."""
     # Validate API key
     if not validate_api_key(x_api_key):
         logger.warning(f"Invalid API key for download: {database_name}")
@@ -444,7 +432,7 @@ async def download_database(
     
     # Get local file path
     relative_path = AVAILABLE_DATABASES[database_name]
-    local_file = Path(settings.local_data_path) / relative_path
+    local_file = Path(settings.database_path) / relative_path
     
     if not local_file.exists():
         logger.error(f"File not found: {local_file}")
@@ -471,13 +459,13 @@ async def root():
         return {
             "name": "GeoIP Authentication API",
             "version": "1.0.0",
-            "storage_mode": settings.storage_mode,
+            "use_s3_urls": settings.use_s3_urls,
             "endpoints": {
                 "auth": "/auth",
                 "query": "/query",
                 "health": "/health",
                 "metrics": "/metrics",
-                "download": "/download/{database_name}" if settings.storage_mode in ['local', 'hybrid'] else None,
+                "download": "/download/{database_name}",
                 "install": "/install"
             }
         }

@@ -4,10 +4,10 @@ A containerized version of the GeoIP authentication API that can be deployed any
 
 ## 🚀 Features
 
-- **Multiple Storage Backends**:
-  - **S3 Mode**: Generate pre-signed URLs (like Lambda)
-  - **Local Mode**: Serve files directly from mounted volume
-  - **Hybrid Mode**: Local files with S3 fallback
+- **Flexible Download Options**:
+  - **S3 URLs**: Generate pre-signed URLs for scalability
+  - **Direct Serving**: Serve files directly from local storage
+  - **Always Local Query**: Fast GeoIP queries using local databases
 
 - **Production Ready**:
   - Health checks and metrics endpoints
@@ -44,8 +44,9 @@ docker-compose up -d
 docker build -t geoip-api .
 docker run -p 8080:8080 \
   -e API_KEYS="key1,key2,key3" \
-  -e STORAGE_MODE="s3" \
+  -e USE_S3_URLS="true" \
   -e S3_BUCKET="your-s3-bucket" \
+  -v geoip-databases:/data/databases \
   geoip-api
 ```
 
@@ -64,41 +65,32 @@ curl -X POST http://localhost:8080/auth \
 
 ## 🔧 Configuration Options
 
-### Storage Modes
+### Download Configuration
 
-#### S3 Mode (Default)
-Generates pre-signed URLs for S3-hosted databases:
+The API always maintains local copies of databases for query functionality. The `USE_S3_URLS` flag controls how database downloads are served:
+
+#### Using S3 URLs (Recommended for Production)
+Generates pre-signed URLs for scalable database distribution:
 
 ```bash
 docker run -p 8080:8080 \
   -e API_KEYS="key1,key2" \
-  -e STORAGE_MODE="s3" \
+  -e USE_S3_URLS="true" \
   -e S3_BUCKET="your-s3-bucket" \
   -e AWS_ACCESS_KEY_ID="your-key" \
   -e AWS_SECRET_ACCESS_KEY="your-secret" \
+  -v geoip-databases:/data/databases \
   geoip-api
 ```
 
-#### Local Mode
-Serves files directly from mounted volume:
+#### Direct File Serving (Local Development)
+Serves files directly from local storage:
 
 ```bash
 docker run -p 8080:8080 \
   -e API_KEYS="key1,key2" \
-  -e STORAGE_MODE="local" \
-  -v /path/to/geoip/databases:/data:ro \
-  geoip-api
-```
-
-#### Hybrid Mode
-Tries local files first, falls back to S3:
-
-```bash
-docker run -p 8080:8080 \
-  -e API_KEYS="key1,key2" \
-  -e STORAGE_MODE="hybrid" \
-  -e S3_BUCKET="your-s3-bucket" \
-  -v /path/to/geoip/databases:/data:ro \
+  -e USE_S3_URLS="false" \
+  -v /path/to/geoip/databases:/data/databases:ro \
   geoip-api
 ```
 
@@ -107,13 +99,13 @@ docker run -p 8080:8080 \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `API_KEYS` | Comma-separated list of allowed API keys | *Required* |
-| `STORAGE_MODE` | Storage backend: `s3`, `local`, or `hybrid` | `s3` |
-| `S3_BUCKET` | S3 bucket name (for s3/hybrid modes) | `your-s3-bucket` |
+| `USE_S3_URLS` | Use S3 pre-signed URLs for downloads | `true` |
+| `S3_BUCKET` | S3 bucket name (required when USE_S3_URLS=true) | `your-s3-bucket` |
 | `AWS_ACCESS_KEY_ID` | AWS credentials (optional, uses IAM role if not set) | - |
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials (optional, uses IAM role if not set) | - |
 | `AWS_REGION` | AWS region | `us-east-1` |
 | `URL_EXPIRY_SECONDS` | Pre-signed URL expiry time | `3600` |
-| `LOCAL_DATA_PATH` | Path to GeoIP files in container | `/data` |
+| `DATABASE_PATH` | Path to GeoIP database files in container | `/data/databases` |
 | `PORT` | Server port | `8080` |
 | `WORKERS` | Number of worker processes | `1` |
 | `DEBUG` | Enable debug mode | `false` |
@@ -157,12 +149,12 @@ Features:
 docker-compose up -d
 ```
 
-## 📁 File Structure for Local Mode
+## 📁 File Structure
 
-When using local or hybrid mode, organize your GeoIP databases like this:
+When using the API, organize your GeoIP databases like this:
 
 ```
-/data/
+/data/databases/
 ├── raw/
 │   ├── maxmind/
 │   │   ├── GeoIP2-City.mmdb
@@ -203,7 +195,7 @@ Response:
 {
   "status": "healthy",
   "timestamp": "2024-01-01T00:00:00",
-  "storage_mode": "s3",
+  "use_s3_urls": true,
   "databases_available": 7
 }
 ```
@@ -221,7 +213,7 @@ Response:
 }
 ```
 
-### Direct Download (Local/Hybrid modes only)
+### Direct Download (when USE_S3_URLS=false)
 `GET /download/{database_name}` (requires API key)
 
 Downloads the database file directly.
@@ -274,8 +266,8 @@ spec:
             secretKeyRef:
               name: geoip-secrets
               key: api-keys
-        - name: STORAGE_MODE
-          value: "s3"
+        - name: USE_S3_URLS
+          value: "true"
         - name: S3_BUCKET
           value: "your-s3-bucket"
         livenessProbe:
@@ -404,7 +396,7 @@ print(s3.list_objects_v2(Bucket='your-s3-bucket', MaxKeys=1))
 ```env
 # .env configuration for high traffic
 WORKERS=8  # Set to number of CPU cores
-STORAGE_MODE=hybrid  # Use local cache with S3 fallback
+USE_S3_URLS=true  # Use S3 URLs for scalability
 URL_EXPIRY_SECONDS=7200  # Longer expiry for less S3 calls
 ```
 

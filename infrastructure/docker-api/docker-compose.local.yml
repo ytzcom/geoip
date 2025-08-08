@@ -11,11 +11,10 @@ services:
       # API Configuration
       - API_KEYS=${API_KEYS:-dev-key-1,dev-key-2}
       
-      # Storage Configuration - Local mode for development
-      - STORAGE_MODE=${STORAGE_MODE:-local}
+      # Download Configuration - Serve files directly in local development
+      - USE_S3_URLS=${USE_S3_URLS:-false}
       
-      # Local Storage Configuration
-      - LOCAL_DATA_PATH=/data/databases
+      # Database Storage Configuration
       - DATABASE_PATH=/data/databases
       
       # Query and Caching Configuration
@@ -44,7 +43,7 @@ services:
     volumes:
       # Mount local GeoIP database directory
       # Update this path to point to your actual GeoIP database files  
-      - ${LOCAL_DATA_PATH:-../../temp}:/data/databases:ro
+      - ${DATABASE_PATH:-../../temp}:/data/databases:ro
       
       # Mount source code for hot reload in debug mode
       - ./app.py:/app/app.py:ro
