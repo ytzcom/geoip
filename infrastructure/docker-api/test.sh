@@ -922,10 +922,10 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
         # For S3 mode, test that the URL is accessible (but don't download)
         url=$(echo "$response" | python3 -c "import sys, json; data=json.load(sys.stdin); print(list(data.values())[0] if data else '')" 2>/dev/null)
         if [[ -n "$url" ]]; then
-            # Test S3 URL with HEAD request
+            # Test S3 URL with GET request (Range header to minimize data)
             log_verbose "  Testing S3 URL: ${url:0:80}..."
-            status=$(curl -s -I -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null)
-            if [[ "$status" == "200" ]]; then
+            status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Range: bytes=0-0" "$url" 2>/dev/null)
+            if [[ "$status" == "200" || "$status" == "206" ]]; then
                 ((TESTS_PASSED++))
                 log "  ${GREEN}✓${NC} S3 URLs are accessible"
             else
@@ -933,7 +933,7 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
                 log "  ${RED}✗${NC} S3 URLs are not accessible (status: $status)"
                 log_verbose "  Full URL: $url"
                 # Get more detailed error info
-                curl_error=$(curl -s -I --max-time 5 "$url" 2>&1 | head -5)
+                curl_error=$(curl -s --max-time 5 -H "Range: bytes=0-0" "$url" 2>&1 | head -5)
                 log_verbose "  Detailed error: $curl_error"
                 log_verbose "  Note: Internal S3 access works (databases download successfully)"
                 log_verbose "  This may be a presigned URL configuration issue, not a credentials problem"
