@@ -94,31 +94,31 @@ async def lifespan(app: FastAPI):
         logger.info(f"Created database path: {settings.database_path}")
         
     # Check if databases exist, download if not
-        db_path = Path(settings.database_path) / 'raw'
-        maxmind_path = db_path / 'maxmind'
-        ip2location_path = db_path / 'ip2location'
-        
-        # Check if any databases are missing
-        databases_exist = (
-            maxmind_path.exists() and 
-            any(maxmind_path.glob('*.mmdb')) and
-            ip2location_path.exists() and 
-            any(ip2location_path.glob('*.BIN'))
-        )
-        
-        if not databases_exist:
-            logger.info("Databases not found, downloading from S3...")
-            try:
-                import asyncio
-                result = await update_databases()
-                if result:
-                    successful = sum(1 for success in result.values() if success)
-                    logger.info(f"Downloaded {successful}/{len(result)} databases")
-                else:
-                    logger.warning("Database download returned no results")
-            except Exception as e:
-                logger.error(f"Failed to download databases at startup: {e}")
-                logger.warning("Continuing without databases - they will be downloaded on schedule")
+    db_path = Path(settings.database_path) / 'raw'
+    maxmind_path = db_path / 'maxmind'
+    ip2location_path = db_path / 'ip2location'
+    
+    # Check if any databases are missing
+    databases_exist = (
+        maxmind_path.exists() and 
+        any(maxmind_path.glob('*.mmdb')) and
+        ip2location_path.exists() and 
+        any(ip2location_path.glob('*.BIN'))
+    )
+    
+    if not databases_exist:
+        logger.info("Databases not found, downloading from S3...")
+        try:
+            import asyncio
+            result = await update_databases()
+            if result:
+                successful = sum(1 for success in result.values() if success)
+                logger.info(f"Downloaded {successful}/{len(result)} databases")
+            else:
+                logger.warning("Database download returned no results")
+        except Exception as e:
+            logger.error(f"Failed to download databases at startup: {e}")
+            logger.warning("Continuing without databases - they will be downloaded on schedule")
     
     # Initialize GeoIP reader
     try:
@@ -779,6 +779,326 @@ if settings.enable_admin:
         logger.info(f"Reloaded API keys, now have {len(settings.api_keys)} keys")
         
         return {"message": f"Reloaded {len(settings.api_keys)} API keys"}
+
+    @app.post("/admin/update-databases")
+    async def update_databases_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Manually trigger database update from S3 (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            logger.info("Admin triggered database update")
+            await update_databases()
+            logger.info("Admin database update completed successfully")
+            return {"message": "Database update completed successfully"}
+        except Exception as e:
+            logger.error(f"Admin database update failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
+
+    @app.post("/admin/cache/clear")
+    async def clear_cache_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Clear all cached query results (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            cache = get_cache()
+            await cache.clear_all()
+            logger.info("Admin cleared all cache entries")
+            return {"message": "Cache cleared successfully"}
+        except Exception as e:
+            logger.error(f"Admin cache clear failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Cache clear failed: {str(e)}")
+
+    @app.get("/admin/cache/stats")
+    async def get_cache_stats_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get cache statistics and configuration (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            cache = get_cache()
+            cache_type = type(cache).__name__.replace('Cache', '').lower()
+            
+            # Basic stats available for all cache types
+            stats = {
+                "cache_type": cache_type,
+                "cache_enabled": settings.cache_type != "none"
+            }
+            
+            # Add type-specific stats if available
+            if hasattr(cache, 'get_stats'):
+                stats.update(await cache.get_stats())
+            
+            return stats
+        except Exception as e:
+            logger.error(f"Admin cache stats failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Cache stats failed: {str(e)}")
+
+    @app.get("/admin/databases/status")
+    async def get_database_status_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get database loading status (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            reader = GeoIPReader()
+            status = reader.get_database_status()
+            
+            total_databases = len(status)
+            loaded_databases = sum(1 for loaded in status.values() if loaded)
+            
+            return {
+                "databases": status,
+                "summary": {
+                    "total": total_databases,
+                    "loaded": loaded_databases,
+                    "failed": total_databases - loaded_databases
+                }
+            }
+        except Exception as e:
+            logger.error(f"Admin database status check failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Database status check failed: {str(e)}")
+
+    @app.get("/admin/databases/info")
+    async def get_database_info_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get database file information (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            database_path = Path(settings.database_path)
+            info = {}
+            
+            # Check MaxMind databases
+            maxmind_path = database_path / 'raw' / 'maxmind'
+            if maxmind_path.exists():
+                info['maxmind'] = {}
+                for db_file in maxmind_path.glob('*.mmdb'):
+                    stat = db_file.stat()
+                    info['maxmind'][db_file.name] = {
+                        "size_bytes": stat.st_size,
+                        "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "path": str(db_file)
+                    }
+            
+            # Check IP2Location databases  
+            ip2location_path = database_path / 'raw' / 'ip2location'
+            if ip2location_path.exists():
+                info['ip2location'] = {}
+                for db_file in ip2location_path.glob('*.BIN'):
+                    stat = db_file.stat()
+                    info['ip2location'][db_file.name] = {
+                        "size_bytes": stat.st_size,
+                        "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "path": str(db_file)
+                    }
+            
+            return info
+        except Exception as e:
+            logger.error(f"Admin database info check failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Database info check failed: {str(e)}")
+
+    @app.post("/admin/databases/reload")
+    async def reload_databases_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Reload databases without updating from S3 (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            reader = GeoIPReader()
+            reader.reload_databases()
+            logger.info("Admin triggered database reload")
+            
+            # Get updated status
+            status = reader.get_database_status()
+            loaded_count = sum(1 for loaded in status.values() if loaded)
+            
+            return {
+                "message": f"Databases reloaded successfully ({loaded_count} loaded)",
+                "databases_loaded": loaded_count,
+                "status": status
+            }
+        except Exception as e:
+            logger.error(f"Admin database reload failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Database reload failed: {str(e)}")
+
+    @app.get("/admin/scheduler/info")
+    async def get_scheduler_info_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get scheduler information and next run times (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            info = {
+                "scheduler_running": scheduler.running,
+                "jobs": []
+            }
+            
+            for job in scheduler.get_jobs():
+                next_run = job.next_run_time
+                info["jobs"].append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": next_run.isoformat() if next_run else None,
+                    "trigger": str(job.trigger)
+                })
+            
+            return info
+        except Exception as e:
+            logger.error(f"Admin scheduler info check failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Scheduler info check failed: {str(e)}")
+
+    @app.post("/admin/scheduler/trigger")
+    async def trigger_scheduler_job_endpoint(
+        x_admin_key: Optional[str] = Header(None),
+        job_id: str = Query("database_update", description="Job ID to trigger")
+    ):
+        """Manually trigger a scheduled job (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            job = scheduler.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+            
+            # Trigger the job
+            await job.func()
+            logger.info(f"Admin manually triggered job: {job_id}")
+            
+            return {"message": f"Job '{job_id}' triggered successfully"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Admin job trigger failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Job trigger failed: {str(e)}")
+
+    @app.get("/admin/status")
+    async def get_admin_status_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get comprehensive system status for administrators (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            # Get basic health info
+            reader = GeoIPReader()
+            db_status = reader.get_database_status()
+            
+            # Get scheduler status
+            scheduler_jobs = []
+            for job in scheduler.get_jobs():
+                next_run = job.next_run_time
+                scheduler_jobs.append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": next_run.isoformat() if next_run else None
+                })
+            
+            # Calculate uptime
+            uptime_seconds = (datetime.now() - metrics["start_time"]).total_seconds()
+            
+            return {
+                "service": {
+                    "status": "healthy",
+                    "uptime_seconds": uptime_seconds,
+                    "version": "1.0.0",
+                    "debug_mode": settings.debug
+                },
+                "databases": {
+                    "total": len(db_status),
+                    "loaded": sum(1 for loaded in db_status.values() if loaded),
+                    "status": db_status
+                },
+                "scheduler": {
+                    "running": scheduler.running,
+                    "jobs": scheduler_jobs
+                },
+                "cache": {
+                    "type": settings.cache_type,
+                    "enabled": settings.cache_type != "none"
+                },
+                "configuration": {
+                    "use_s3_urls": settings.use_s3_urls,
+                    "database_path": settings.database_path,
+                    "workers": settings.workers,
+                    "port": settings.port
+                },
+                "metrics": {
+                    "total_requests": metrics["total_requests"],
+                    "successful_requests": metrics["successful_requests"],
+                    "failed_requests": metrics["failed_requests"]
+                }
+            }
+        except Exception as e:
+            logger.error(f"Admin status check failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+    @app.get("/admin/config")
+    async def get_admin_config_endpoint(
+        x_admin_key: Optional[str] = Header(None)
+    ):
+        """Get current configuration (sanitized, no secrets) (requires admin key)."""
+        if x_admin_key != settings.admin_key:
+            raise HTTPException(status_code=401, detail="Invalid admin key")
+        
+        try:
+            config = {
+                "api": {
+                    "port": settings.port,
+                    "workers": settings.workers,
+                    "debug": settings.debug,
+                    "api_keys_count": len(settings.api_keys)
+                },
+                "database": {
+                    "path": settings.database_path,
+                    "update_schedule": settings.database_update_schedule
+                },
+                "s3": {
+                    "use_s3_urls": settings.use_s3_urls,
+                    "bucket": settings.s3_bucket if settings.use_s3_urls else None,
+                    "region": settings.aws_region if settings.use_s3_urls else None,
+                    "url_expiry_seconds": settings.url_expiry_seconds if settings.use_s3_urls else None
+                },
+                "cache": {
+                    "type": settings.cache_type,
+                    "enabled": settings.cache_type != "none"
+                },
+                "admin": {
+                    "enabled": settings.enable_admin,
+                    "key_configured": bool(settings.admin_key)
+                },
+                "logging": {
+                    "level": settings.log_level
+                }
+            }
+            
+            # Add Redis config if using Redis cache
+            if settings.cache_type == "redis" and hasattr(settings, 'redis_url'):
+                config["cache"]["redis_url"] = "***configured***"
+            
+            return config
+        except Exception as e:
+            logger.error(f"Admin config check failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Config check failed: {str(e)}")
 
 
 if __name__ == "__main__":

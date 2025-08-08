@@ -135,6 +135,35 @@ check_prerequisites() {
     log -e "${GREEN}✓${NC} Prerequisites check passed"
 }
 
+load_test_environment() {
+    log "Loading test environment variables..."
+    
+    # Load environment variables from .env.test into the script environment
+    if [[ -f "$ENV_FILE" ]]; then
+        # Parse .env.test and export variables (skip comments and empty lines)
+        while IFS='=' read -r key value; do
+            # Skip comments, empty lines, and malformed lines
+            [[ $key =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$key" ]] && continue
+            [[ $key =~ ^[[:space:]]*$ ]] && continue
+            
+            # Remove leading/trailing whitespace
+            key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            
+            # Remove quotes from value if present
+            value=$(echo "$value" | sed 's/^["'\'']*//;s/["'\'']*$//')
+            
+            # Export the variable
+            export "$key"="$value"
+        done < "$ENV_FILE"
+        
+        log -e "${GREEN}✓${NC} Environment variables loaded from $ENV_FILE"
+    else
+        log -e "${YELLOW}Warning: $ENV_FILE not found, using defaults${NC}"
+    fi
+}
+
 check_docker_image() {
     log "Checking Docker image availability..."
     
@@ -166,6 +195,7 @@ handle_existing_container() {
             local health_check=$(curl -s "$API_URL/health" 2>/dev/null || echo "")
             if [[ -n "$health_check" ]] && echo "$health_check" | grep -q '"status":"healthy"'; then
                 log -e "${GREEN}✓${NC} Existing container is healthy, using it for tests"
+                log -e "${YELLOW}Note: If testing new features, consider using --rebuild to ensure latest code${NC}"
                 return 0
             else
                 log -e "${YELLOW}Warning: Existing container is not responding, restarting...${NC}"
@@ -187,14 +217,32 @@ start_container() {
     # Stop and remove existing container if rebuild requested
     if [[ "$REBUILD_CONTAINER" == true ]]; then
         log "Rebuilding: Stopping and removing existing container..."
-        docker stop "$CONTAINER_NAME" >/dev/null 2>&1
-        docker rm "$CONTAINER_NAME" >/dev/null 2>&1
+        
+        # Force stop with timeout
+        if docker ps -q --filter "name=$CONTAINER_NAME" | grep -q .; then
+            log "Stopping container $CONTAINER_NAME (timeout: 10s)..."
+            timeout 10s docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || {
+                log "Force killing container..."
+                docker kill "$CONTAINER_NAME" >/dev/null 2>&1
+            }
+        fi
+        
+        # Remove container
+        if docker ps -a -q --filter "name=$CONTAINER_NAME" | grep -q .; then
+            log "Removing container $CONTAINER_NAME..."
+            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+        fi
+        
+        log "Container cleanup completed"
     fi
     
     # Check for existing container
+    log "Checking for any remaining containers..."
     if handle_existing_container; then
+        log "Found existing healthy container, using it"
         return 0
     fi
+    log "No existing container found, proceeding to start new one"
     
     # Check if port is already in use
     if netstat -tln 2>/dev/null | grep -q ":$CONTAINER_PORT " || ss -tln 2>/dev/null | grep -q ":$CONTAINER_PORT "; then
@@ -309,6 +357,7 @@ run_test() {
     local headers="${6:-}"
     local validate_json="${7:-false}"
     local validate_func="${8:-}"
+    local timeout="${9:-5}"  # Default timeout of 5 seconds, can be overridden
     
     local test_start=$(date +%s%N)
     local attempts=0
@@ -329,7 +378,7 @@ run_test() {
         fi
         
         # Build curl command with timeout for all requests
-        local curl_cmd="curl -s --max-time 5 -w '\n|||STATUS|||%{http_code}|||' -X $method"
+        local curl_cmd="curl -s --max-time $timeout -w '\n|||STATUS|||%{http_code}|||' -X $method"
         
         # Add headers
         if [[ -n "$headers" ]]; then
@@ -498,6 +547,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --rebuild)
             REBUILD_CONTAINER=true
+            START_CONTAINER=true  # Auto-enable container start when rebuilding
             shift
             ;;
         --no-container-check)
@@ -541,22 +591,29 @@ fi
 # Pre-flight checks unless skipped
 if [[ "$NO_CONTAINER_CHECK" == false ]]; then
     check_prerequisites
+    load_test_environment
+else
+    # Load environment even when skipping container checks
+    load_test_environment
 fi
 
 # Container management
+log "Container management: START_CONTAINER=$START_CONTAINER, REBUILD_CONTAINER=$REBUILD_CONTAINER"
 if [[ "$START_CONTAINER" == true ]]; then
+    log "Entering container management section..."
     if [[ "$REBUILD_CONTAINER" == true ]]; then
         log "Rebuilding Docker image..."
         if ! docker build -t "$CONTAINER_IMAGE" . &>/dev/null; then
             log -e "${RED}Error: Failed to rebuild Docker image${NC}"
             exit 1
         fi
-        log -g "Docker image rebuilt successfully"
+        log -e "${GREEN}✓${NC} Docker image rebuilt successfully"
     fi
     
     check_docker_image
-    handle_existing_container
+    log "Starting container..."
     start_container
+    log "Waiting for container to be ready..."
     wait_for_container
 fi
 
@@ -565,8 +622,8 @@ if [[ "$CLEANUP_CONTAINER" == true ]]; then
     trap cleanup_container EXIT
 fi
 
-# Check container health unless skipped
-if [[ "$SKIP_SETUP" == false ]] && [[ "$NO_CONTAINER_CHECK" == false ]]; then
+# Check container health unless skipped or just started
+if [[ "$SKIP_SETUP" == false ]] && [[ "$NO_CONTAINER_CHECK" == false ]] && [[ "$START_CONTAINER" == false ]]; then
     check_container_health
 fi
 
@@ -866,6 +923,7 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
         url=$(echo "$response" | python3 -c "import sys, json; data=json.load(sys.stdin); print(list(data.values())[0] if data else '')" 2>/dev/null)
         if [[ -n "$url" ]]; then
             # Test S3 URL with HEAD request
+            log_verbose "  Testing S3 URL: ${url:0:80}..."
             status=$(curl -s -I -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null)
             if [[ "$status" == "200" ]]; then
                 ((TESTS_PASSED++))
@@ -873,10 +931,17 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "download" ]]; then
             else
                 ((TESTS_FAILED++))
                 log "  ${RED}✗${NC} S3 URLs are not accessible (status: $status)"
+                log_verbose "  Full URL: $url"
+                # Get more detailed error info
+                curl_error=$(curl -s -I --max-time 5 "$url" 2>&1 | head -5)
+                log_verbose "  Detailed error: $curl_error"
+                log_verbose "  Note: Internal S3 access works (databases download successfully)"
+                log_verbose "  This may be a presigned URL configuration issue, not a credentials problem"
             fi
         else
             ((TESTS_FAILED++))
             log "  ${RED}✗${NC} Could not extract S3 URL from response"
+            log_verbose "  Auth response: $response"
         fi
         
         # Skip direct download tests for S3 mode
@@ -1045,8 +1110,110 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "admin" ]]; then
             "POST" \
             "" \
             "-H 'X-Admin-Key: invalid-admin-key'"
+
+        # Test database update endpoint (requires longer timeout for S3 downloads)
+        # Note: This downloads ~1.8GB of databases and can take 60-90 seconds
+        run_test "POST /admin/update-databases with valid admin key" \
+            "$API_URL/admin/update-databases" \
+            "200" \
+            "POST" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true" \
+            "" \
+            "120"
+
+        run_test "POST /admin/update-databases with invalid admin key" \
+            "$API_URL/admin/update-databases" \
+            "401" \
+            "POST" \
+            "" \
+            "-H 'X-Admin-Key: invalid-admin-key'"
+
+        # Test cache endpoints
+        run_test "POST /admin/cache/clear with valid admin key" \
+            "$API_URL/admin/cache/clear" \
+            "200" \
+            "POST" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        run_test "GET /admin/cache/stats with valid admin key" \
+            "$API_URL/admin/cache/stats" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        # Test database management endpoints
+        run_test "GET /admin/databases/status with valid admin key" \
+            "$API_URL/admin/databases/status" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        run_test "GET /admin/databases/info with valid admin key" \
+            "$API_URL/admin/databases/info" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        run_test "POST /admin/databases/reload with valid admin key" \
+            "$API_URL/admin/databases/reload" \
+            "200" \
+            "POST" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        # Test scheduler endpoints
+        run_test "GET /admin/scheduler/info with valid admin key" \
+            "$API_URL/admin/scheduler/info" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        # Test system status endpoints
+        run_test "GET /admin/status with valid admin key" \
+            "$API_URL/admin/status" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        run_test "GET /admin/config with valid admin key" \
+            "$API_URL/admin/config" \
+            "200" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: $ADMIN_KEY'" \
+            "true"
+
+        # Test auth failures on new endpoints
+        run_test "GET /admin/status with invalid admin key" \
+            "$API_URL/admin/status" \
+            "401" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: invalid-admin-key'"
+
+        run_test "GET /admin/config with invalid admin key" \
+            "$API_URL/admin/config" \
+            "401" \
+            "GET" \
+            "" \
+            "-H 'X-Admin-Key: invalid-admin-key'"
     else
-        ((TESTS_SKIPPED+=2))
+        ((TESTS_SKIPPED+=12))  # Updated count for new tests
         log "  ${YELLOW}⊘${NC} Admin tests skipped (no admin key configured)"
     fi
 fi
