@@ -75,6 +75,159 @@ AVAILABLE_DATABASES = {
     'IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN': 'raw/ip2location/IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN',
 }
 
+# Database aliases and smart matching system
+DATABASE_ALIASES = {
+    # Provider-based bulk selection
+    'maxmind/all': ['GeoIP2-City.mmdb', 'GeoIP2-Country.mmdb', 'GeoIP2-ISP.mmdb', 'GeoIP2-Connection-Type.mmdb'],
+    'ip2location/all': [
+        'IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN',
+        'IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN',
+        'IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN'
+    ],
+    
+    # MaxMind short names and variations
+    'city': ['GeoIP2-City.mmdb'],
+    'maxmind/city': ['GeoIP2-City.mmdb'],
+    'geoip2-city': ['GeoIP2-City.mmdb'],
+    'geoip2city': ['GeoIP2-City.mmdb'],
+    
+    'country': ['GeoIP2-Country.mmdb'],
+    'maxmind/country': ['GeoIP2-Country.mmdb'],
+    'geoip2-country': ['GeoIP2-Country.mmdb'],
+    'geoip2country': ['GeoIP2-Country.mmdb'],
+    
+    'isp': ['GeoIP2-ISP.mmdb'],
+    'maxmind/isp': ['GeoIP2-ISP.mmdb'],
+    'geoip2-isp': ['GeoIP2-ISP.mmdb'],
+    'geoip2isp': ['GeoIP2-ISP.mmdb'],
+    
+    'connection': ['GeoIP2-Connection-Type.mmdb'],
+    'connection-type': ['GeoIP2-Connection-Type.mmdb'],
+    'connectiontype': ['GeoIP2-Connection-Type.mmdb'],
+    'maxmind/connection': ['GeoIP2-Connection-Type.mmdb'],
+    'geoip2-connection-type': ['GeoIP2-Connection-Type.mmdb'],
+    
+    # IP2Location short names and variations
+    'proxy': ['IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN'],
+    'ip2proxy': ['IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN'],
+    'ip2location/proxy': ['IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN'],
+    
+    'ipv4': ['IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN'],
+    'ip2location/ipv4': ['IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN'],
+    'full': ['IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN'],
+    'ip2location/full': ['IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN'],
+    
+    'ipv6': ['IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN'],
+    'ip2location/ipv6': ['IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN'],
+}
+
+
+def normalize_database_name(name: str) -> str:
+    """Normalize database name for matching."""
+    return name.lower().replace('_', '-').replace(' ', '-').strip()
+
+
+def find_similar_names(target: str, available: List[str], max_suggestions: int = 3) -> List[str]:
+    """Find similar database names using simple string similarity."""
+    target_normalized = normalize_database_name(target)
+    suggestions = []
+    
+    for db_name in available:
+        db_normalized = normalize_database_name(db_name)
+        
+        # Check if target is a substring
+        if target_normalized in db_normalized or db_normalized in target_normalized:
+            suggestions.append(db_name)
+    
+    return suggestions[:max_suggestions]
+
+
+def resolve_database_names(requested_names: List[str]) -> tuple[List[str], List[str], List[str]]:
+    """
+    Smart database name resolver with flexible matching.
+    
+    Returns:
+        tuple: (resolved_names, invalid_names, suggestions)
+    """
+    resolved = set()
+    invalid = []
+    suggestions = []
+    
+    for name in requested_names:
+        original_name = name
+        normalized_name = normalize_database_name(name)
+        matched = False
+        
+        # 1. Exact match (case sensitive) - highest priority
+        if name in AVAILABLE_DATABASES:
+            resolved.add(name)
+            matched = True
+            continue
+        
+        # 2. Case-insensitive exact match
+        for db_name in AVAILABLE_DATABASES.keys():
+            if normalize_database_name(db_name) == normalized_name:
+                resolved.add(db_name)
+                matched = True
+                break
+        
+        if matched:
+            continue
+        
+        # 3. Extension-optional matching
+        # Try adding common extensions if not present
+        name_without_ext = name.rsplit('.', 1)[0] if '.' in name else name
+        normalized_without_ext = normalize_database_name(name_without_ext)
+        
+        for db_name in AVAILABLE_DATABASES.keys():
+            db_without_ext = db_name.rsplit('.', 1)[0] if '.' in db_name else db_name
+            if normalize_database_name(db_without_ext) == normalized_without_ext:
+                resolved.add(db_name)
+                matched = True
+                break
+        
+        if matched:
+            continue
+        
+        # 4. Alias matching
+        if normalized_name in DATABASE_ALIASES:
+            resolved.update(DATABASE_ALIASES[normalized_name])
+            matched = True
+            continue
+        
+        # 5. Partial matching for aliases (check if name appears in any alias key)
+        for alias_key, alias_databases in DATABASE_ALIASES.items():
+            alias_key_normalized = normalize_database_name(alias_key)
+            if (normalized_name in alias_key_normalized or 
+                alias_key_normalized in normalized_name or
+                any(normalized_name in normalize_database_name(part) for part in alias_key.split('/'))):
+                resolved.update(alias_databases)
+                matched = True
+                break
+        
+        if matched:
+            continue
+        
+        # 6. Partial matching against actual database names
+        for db_name in AVAILABLE_DATABASES.keys():
+            db_normalized = normalize_database_name(db_name)
+            # Check if the requested name appears in the database name
+            if normalized_name in db_normalized:
+                resolved.add(db_name)
+                matched = True
+                break
+        
+        # If still no match, mark as invalid and find suggestions
+        if not matched:
+            invalid.append(original_name)
+            # Find similar names for suggestions
+            all_searchable = list(AVAILABLE_DATABASES.keys()) + list(DATABASE_ALIASES.keys())
+            similar = find_similar_names(original_name, all_searchable)
+            if similar:
+                suggestions.extend(similar)
+    
+    return list(resolved), invalid, suggestions
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -389,13 +542,23 @@ async def authenticate(
         logger.warning(f"Invalid API key attempt from {request.client.host}")
         raise HTTPException(status_code=401, detail="Invalid API key")
     
-    # Determine which databases to return
+    # Determine which databases to return using smart resolver
     if body.databases == "all":
         databases = list(AVAILABLE_DATABASES.keys())
     elif isinstance(body.databases, list):
-        # Validate requested databases exist
-        databases = [db for db in body.databases if db in AVAILABLE_DATABASES]
-        if not databases and body.databases:
+        # Use smart resolver for flexible database name matching
+        resolved_databases, invalid_names, suggestions = resolve_database_names(body.databases)
+        
+        if invalid_names:
+            metrics["failed_requests"] += 1
+            error_msg = f"Invalid database names: {', '.join(invalid_names)}"
+            if suggestions:
+                error_msg += f". Did you mean: {', '.join(set(suggestions[:5]))}"
+            error_msg += f". Use GET /databases to see all available databases and aliases."
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        databases = resolved_databases
+        if not databases:
             metrics["failed_requests"] += 1
             raise HTTPException(status_code=400, detail="No valid databases in request")
     else:
@@ -416,6 +579,99 @@ async def authenticate(
     return JSONResponse(content=urls)
 
 
+@app.get("/databases")
+async def list_databases():
+    """
+    List all available GeoIP databases with aliases and examples.
+    
+    This endpoint returns the names, metadata, and available aliases for all databases
+    without requiring authentication. Useful for discovery and integration.
+    """
+    # Build reverse alias mapping (database -> list of aliases)
+    database_aliases_reverse = {}
+    for alias, db_list in DATABASE_ALIASES.items():
+        for db_name in db_list:
+            if db_name not in database_aliases_reverse:
+                database_aliases_reverse[db_name] = []
+            database_aliases_reverse[db_name].append(alias)
+    
+    # Group databases by provider with alias information
+    maxmind_databases = []
+    ip2location_databases = []
+    
+    for db_name in AVAILABLE_DATABASES.keys():
+        # Find aliases for this database
+        aliases = database_aliases_reverse.get(db_name, [])
+        
+        db_info = {
+            "name": db_name,
+            "extension": db_name.split('.')[-1] if '.' in db_name else None,
+            "aliases": aliases,
+            "aliases_count": len(aliases)
+        }
+        
+        if 'GeoIP2' in db_name or '.mmdb' in db_name:
+            db_info["provider"] = "MaxMind"
+            db_info["format"] = "MMDB"
+            maxmind_databases.append(db_info)
+        else:
+            db_info["provider"] = "IP2Location"
+            db_info["format"] = "BIN"
+            ip2location_databases.append(db_info)
+    
+    # Create bulk selection examples
+    bulk_aliases = {
+        "all_databases": "all",
+        "all_maxmind": "maxmind/all",
+        "all_ip2location": "ip2location/all"
+    }
+    
+    # Popular examples
+    examples = {
+        "single_database": [
+            "city",
+            "GeoIP2-Country.mmdb",
+            "proxy",
+            "connection-type"
+        ],
+        "multiple_databases": [
+            ["city", "country"],
+            ["maxmind/city", "ip2location/proxy"],
+            ["GeoIP2-City.mmdb", "GeoIP2-ISP.mmdb"]
+        ],
+        "bulk_selection": [
+            "maxmind/all",
+            "ip2location/all",
+            "all"
+        ]
+    }
+    
+    return {
+        "total": len(AVAILABLE_DATABASES),
+        "providers": {
+            "maxmind": {
+                "count": len(maxmind_databases),
+                "databases": maxmind_databases
+            },
+            "ip2location": {
+                "count": len(ip2location_databases),
+                "databases": ip2location_databases
+            }
+        },
+        "bulk_aliases": bulk_aliases,
+        "examples": examples,
+        "usage_notes": {
+            "case_sensitivity": "Database names are case-insensitive",
+            "extensions": "File extensions are optional in most cases",
+            "aliases": "Many short aliases are available for easier selection",
+            "bulk_selection": "Use provider/all for bulk downloads",
+            "suggestions": "Invalid names will return suggestions for similar databases"
+        },
+        "all_databases": list(AVAILABLE_DATABASES.keys()),
+        "all_aliases": list(DATABASE_ALIASES.keys())
+    }
+
+
 @app.get("/download/{database_name}")
 async def download_database(
     database_name: str,
@@ -427,22 +683,32 @@ async def download_database(
         logger.warning(f"Invalid API key for download: {database_name}")
         raise HTTPException(status_code=401, detail="Invalid API key")
     
-    if database_name not in AVAILABLE_DATABASES:
-        raise HTTPException(status_code=404, detail="Database not found")
+    # Use smart resolver to find the actual database name
+    resolved_databases, invalid_names, suggestions = resolve_database_names([database_name])
+    
+    if invalid_names or not resolved_databases:
+        error_msg = f"Database not found: {database_name}"
+        if suggestions:
+            error_msg += f". Did you mean: {', '.join(set(suggestions[:3]))}"
+        error_msg += f". Use GET /databases to see all available databases."
+        raise HTTPException(status_code=404, detail=error_msg)
+    
+    # Use the first resolved database name (should only be one for single input)
+    actual_database_name = resolved_databases[0]
     
     # Get local file path
-    relative_path = AVAILABLE_DATABASES[database_name]
+    relative_path = AVAILABLE_DATABASES[actual_database_name]
     local_file = Path(settings.database_path) / relative_path
     
     if not local_file.exists():
         logger.error(f"File not found: {local_file}")
         raise HTTPException(status_code=404, detail="Database file not found")
     
-    logger.info(f"Serving file: {database_name}")
+    logger.info(f"Serving file: {actual_database_name} (requested as: {database_name})")
     
     return FileResponse(
         path=local_file,
-        filename=database_name,
+        filename=actual_database_name,  # Use the actual filename for download
         media_type='application/octet-stream'
     )
 
@@ -461,6 +727,7 @@ async def root():
             "version": "1.0.0",
             "use_s3_urls": settings.use_s3_urls,
             "endpoints": {
+                "databases": "/databases",
                 "auth": "/auth",
                 "query": "/query", 
                 "health": "/health",
