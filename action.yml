@@ -1,5 +1,5 @@
 name: 'GeoIP Database Cache'
-description: 'Download and cache GeoIP databases from S3 with API key authentication'
+description: 'Download and cache GeoIP databases using the official GeoIP updater binary'
 author: 'YTZ'
 branding:
   icon: 'globe'
@@ -28,7 +28,7 @@ inputs:
   auth-endpoint:
     description: 'Authentication endpoint URL'
     required: false
-    default: 'https://api.ytz-geoip.com/v1/auth'
+    default: 'https://geoipdb.net/auth'
   validate:
     description: 'Validate downloaded files'
     required: false
@@ -37,6 +37,18 @@ inputs:
     description: 'Fail the action if download or validation fails'
     required: false
     default: 'true'
+  timeout:
+    description: 'Download timeout duration (e.g., 5m, 300s)'
+    required: false
+    default: '5m'
+  concurrent:
+    description: 'Maximum concurrent downloads'
+    required: false
+    default: '4'
+  quiet:
+    description: 'Suppress non-essential output'
+    required: false
+    default: 'false'
 
 outputs:
   cache-hit:
@@ -47,70 +59,107 @@ outputs:
     value: ${{ inputs.path }}
   databases-downloaded:
     description: 'List of databases that were downloaded'
-    value: ${{ steps.download.outputs.databases || steps.cache-list.outputs.databases }}
+    value: ${{ steps.go-binary.outputs.databases || steps.cache-list.outputs.databases }}
+  binary-version:
+    description: 'Version of the GeoIP updater binary used'
+    value: ${{ steps.go-binary.outputs.version }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Check dependencies
+    - name: Detect platform and binary name
+      id: platform
       shell: bash
       run: |
-        echo "🔍 Checking required dependencies..."
+        echo "🔍 Detecting runner platform..."
         
-        # Check for jq
-        if ! command -v jq &> /dev/null; then
-          echo "❌ Error: jq is not installed"
-          echo "jq is required for JSON processing in this action"
-          echo ""
-          echo "To install jq:"
-          echo "  - Ubuntu/Debian: sudo apt-get install jq"
-          echo "  - macOS: brew install jq"
-          echo "  - GitHub Actions Ubuntu: jq is pre-installed"
-          echo ""
-          echo "For more information: https://stedolan.github.io/jq/"
-          exit 1
+        # Detect OS and architecture
+        case "${{ runner.os }}" in
+          Linux)
+            OS="linux"
+            ;;
+          macOS)
+            OS="darwin"
+            ;;
+          Windows)
+            OS="windows"
+            ;;
+          *)
+            echo "❌ Unsupported OS: ${{ runner.os }}"
+            exit 1
+            ;;
+        esac
+        
+        # Detect architecture (GitHub runners are amd64 except macOS 14+ which is arm64)
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          macOS-ARM64|macOS-arm64)
+            ARCH="arm64"
+            ;;
+          *)
+            ARCH="amd64"
+            ;;
+        esac
+        
+        # Construct binary name
+        if [ "$OS" = "windows" ]; then
+          BINARY_NAME="geoip-updater-${OS}-${ARCH}.exe"
+        else
+          BINARY_NAME="geoip-updater-${OS}-${ARCH}"
         fi
         
-        echo "✅ jq version: $(jq --version)"
+        # Set outputs
+        echo "os=${OS}" >> $GITHUB_OUTPUT
+        echo "arch=${ARCH}" >> $GITHUB_OUTPUT
+        echo "binary-name=${BINARY_NAME}" >> $GITHUB_OUTPUT
+        echo "binary-path=./geoip-binary/${BINARY_NAME}" >> $GITHUB_OUTPUT
         
-        # Check for curl
-        if ! command -v curl &> /dev/null; then
-          echo "❌ Error: curl is not installed"
-          exit 1
-        fi
-        
-        echo "✅ All dependencies are available"
+        echo "✅ Platform: ${OS}/${ARCH} → ${BINARY_NAME}"
 
-    - name: Generate cache key
+    - name: Generate cache keys
       id: cache-key
       shell: bash
       run: |
-        # Generate time-based cache key
+        # Generate cache keys for both databases and binary
         case "${{ inputs.cache-refresh }}" in
           daily)
-            CACHE_KEY="${{ inputs.cache-key-prefix }}-${{ runner.os }}-$(date +%Y-%j)"
+            DB_CACHE_KEY="${{ inputs.cache-key-prefix }}-db-${{ runner.os }}-$(date +%Y-%j)"
             ;;
           weekly)
-            CACHE_KEY="${{ inputs.cache-key-prefix }}-${{ runner.os }}-$(date +%Y-W%V)"
+            DB_CACHE_KEY="${{ inputs.cache-key-prefix }}-db-${{ runner.os }}-$(date +%Y-W%V)"
             ;;
           monthly)
-            CACHE_KEY="${{ inputs.cache-key-prefix }}-${{ runner.os }}-$(date +%Y-%m)"
+            DB_CACHE_KEY="${{ inputs.cache-key-prefix }}-db-${{ runner.os }}-$(date +%Y-%m)"
             ;;
           *)
             echo "Invalid cache-refresh value: ${{ inputs.cache-refresh }}"
             exit 1
             ;;
         esac
-        echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
-        echo "cache-key=$CACHE_KEY" >> $GITHUB_OUTPUT
-        echo "📅 Cache key: $CACHE_KEY"
+        
+        # Binary cache key (monthly refresh is fine for binaries)
+        BINARY_CACHE_KEY="${{ inputs.cache-key-prefix }}-binary-${{ steps.platform.outputs.binary-name }}-$(date +%Y-%m)"
+        
+        # Set environment variables and outputs
+        echo "DB_CACHE_KEY=$DB_CACHE_KEY" >> $GITHUB_ENV
+        echo "BINARY_CACHE_KEY=$BINARY_CACHE_KEY" >> $GITHUB_ENV
+        echo "db-cache-key=$DB_CACHE_KEY" >> $GITHUB_OUTPUT
+        echo "binary-cache-key=$BINARY_CACHE_KEY" >> $GITHUB_OUTPUT
+        echo "📅 Cache keys: DB=$DB_CACHE_KEY | Binary=$BINARY_CACHE_KEY"
 
-    - name: Check cache
+    - name: Check database cache
       id: cache
       uses: actions/cache@v4
       with:
         path: ${{ inputs.path }}
-        key: ${{ env.CACHE_KEY }}
+        key: ${{ env.DB_CACHE_KEY }}
+        enableCrossOsArchive: true
+
+    - name: Check binary cache
+      id: binary-cache
+      uses: actions/cache@v4
+      with:
+        path: ./geoip-binary
+        key: ${{ env.BINARY_CACHE_KEY }}
         enableCrossOsArchive: true
 
     - name: List cached databases
@@ -125,191 +174,166 @@ runs:
           echo "📦 Cached databases: $DATABASES"
         fi
 
-    - name: Create directory
-      if: steps.cache.outputs.cache-hit != 'true'
+    - name: Download Go binary
+      if: steps.binary-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        mkdir -p "${{ inputs.path }}"
-        echo "📁 Created directory: ${{ inputs.path }}"
-
-    - name: Authenticate and get download URLs
-      id: auth
-      if: steps.cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        echo "🔐 Authenticating with GeoIP API..."
+        echo "📥 Downloading GeoIP updater binary..."
+        mkdir -p ./geoip-binary
         
-        # Set up cleanup trap
-        cleanup() {
-          rm -f /tmp/download-urls.json 2>/dev/null || true
-          rm -f /tmp/download_results_*.txt 2>/dev/null || true
-        }
-        trap cleanup EXIT
+        # Try to download from GitHub releases
+        DOWNLOAD_URL="https://github.com/ytzcom/geoip/releases/latest/download/${{ steps.platform.outputs.binary-name }}"
         
-        # Prepare request body
-        if [ "${{ inputs.databases }}" = "all" ]; then
-          DATABASES_JSON='{"databases": "all"}'
+        echo "⏳ Attempting to download from: $DOWNLOAD_URL"
+        if curl -L -f -o "${{ steps.platform.outputs.binary-path }}" "$DOWNLOAD_URL" --connect-timeout 30 --max-time 120 2>/dev/null; then
+          chmod +x "${{ steps.platform.outputs.binary-path }}"
+          echo "✅ Downloaded and made executable: ${{ steps.platform.outputs.binary-name }}"
         else
-          # Convert comma-separated list to JSON array
-          DATABASES_JSON=$(echo "${{ inputs.databases }}" | jq -R 'split(",") | map(select(length > 0)) | {databases: .}')
-        fi
-        
-        # Call auth API with retry logic
-        RETRY_COUNT=0
-        MAX_RETRIES=3
-        RETRY_DELAY=2
-        AUTH_SUCCESS=false
-        
-        while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$AUTH_SUCCESS" = "false" ]; do
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ inputs.auth-endpoint }}" \
-            -H "X-API-Key: ${{ inputs.api-key }}" \
-            -H "Content-Type: application/json" \
-            -d "$DATABASES_JSON" \
-            --connect-timeout 10 \
-            --max-time 30 \
-            2>/dev/null || echo -e "\n000")
+          echo "⚠️  Binary not found in releases, attempting fallback to build from source..."
           
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | head -n-1)
-          
-          if [ "$HTTP_CODE" = "200" ]; then
-            AUTH_SUCCESS=true
-          else
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            if [ "$RETRY_COUNT" -lt "$MAX_RETRIES" ]; then
-              echo "⚠️  Authentication failed with status code: $HTTP_CODE, retrying in ${RETRY_DELAY}s (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
-              sleep $RETRY_DELAY
-              # Exponential backoff
-              RETRY_DELAY=$((RETRY_DELAY * 2))
+          # Fallback: Build from source if Go is available
+          if command -v go >/dev/null 2>&1; then
+            echo "🔨 Building binary from source..."
+            
+            # Clone or use local repository
+            if [ ! -d "./cli/go" ]; then
+              echo "📦 Cloning repository..."
+              git clone --depth 1 https://github.com/ytzcom/geoip.git geoip-source
+              cd geoip-source/cli/go
             else
-              echo "❌ Authentication failed with status code: $HTTP_CODE after $MAX_RETRIES attempts"
-              echo "Response: $BODY"
-              if [ "${{ inputs.fail-on-error }}" = "true" ]; then
-                exit 1
-              fi
+              cd ./cli/go
+            fi
+            
+            # Build the binary
+            GOOS="${{ steps.platform.outputs.os }}" \
+            GOARCH="${{ steps.platform.outputs.arch }}" \
+            go build -ldflags="-s -w" -trimpath -o "../../../${{ steps.platform.outputs.binary-path }}" .
+            
+            cd ../../../
+            chmod +x "${{ steps.platform.outputs.binary-path }}"
+            echo "✅ Successfully built binary from source"
+            
+            # Clean up if we cloned
+            rm -rf geoip-source 2>/dev/null || true
+          else
+            echo "❌ Failed to download binary and Go is not available for building from source"
+            echo ""
+            echo "To resolve this issue:"
+            echo "1. Wait for the next release to be published"
+            echo "2. Or ensure Go 1.21+ is installed on the runner"
+            echo "3. Or create a release using: workflow_dispatch on release-go-binaries.yml"
+            echo ""
+            echo "For now, the action will attempt to continue with limited functionality..."
+            
+            # Create a stub script that will fail gracefully
+            cat > "${{ steps.platform.outputs.binary-path }}" << 'EOF'
+        #!/bin/sh
+        echo "❌ GeoIP updater binary not available"
+        echo "The binary could not be downloaded or built."
+        echo "Please check the action logs for more details."
+        exit 1
+        EOF
+            chmod +x "${{ steps.platform.outputs.binary-path }}"
+            
+            if [ "${{ inputs.fail-on-error }}" = "true" ]; then
+              exit 1
             fi
           fi
-        done
+        fi
+
+    - name: Save binary to cache
+      if: steps.binary-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ./geoip-binary
+        key: ${{ env.BINARY_CACHE_KEY }}
+        enableCrossOsArchive: true
+
+    - name: Run GeoIP updater
+      id: go-binary
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "🌍 Running GeoIP updater binary..."
         
-        if [ "$AUTH_SUCCESS" != "true" ]; then
-          echo "❌ Authentication failed after all retry attempts"
+        # Ensure target directory exists
+        mkdir -p "${{ inputs.path }}"
+        
+        # Build command arguments
+        ARGS=(
+          "--api-key" "${{ inputs.api-key }}"
+          "--endpoint" "${{ inputs.auth-endpoint }}"
+          "--directory" "${{ inputs.path }}"
+          "--databases" "${{ inputs.databases }}"
+          "--timeout" "${{ inputs.timeout }}"
+          "--concurrent" "${{ inputs.concurrent }}"
+        )
+        
+        # Add conditional flags
+        if [ "${{ inputs.quiet }}" = "true" ]; then
+          ARGS+=("--quiet")
+        fi
+        
+        # Add validation flag if requested
+        if [ "${{ inputs.validate }}" = "true" ]; then
+          ARGS+=("--verbose")  # Verbose output helps with validation parsing
+        fi
+        
+        # Run the binary
+        BINARY_PATH="${{ steps.platform.outputs.binary-path }}"
+        if [ ! -x "$BINARY_PATH" ]; then
+          echo "❌ Binary not found or not executable: $BINARY_PATH"
           if [ "${{ inputs.fail-on-error }}" = "true" ]; then
             exit 1
           fi
         fi
         
-        echo "$BODY" > /tmp/download-urls.json
-        echo "✅ Authentication successful"
-
-    - name: Download databases
-      id: download
-      if: steps.cache.outputs.cache-hit != 'true' && steps.auth.outcome == 'success'
-      shell: bash
-      run: |
-        cd "${{ inputs.path }}"
-        echo "📥 Downloading GeoIP databases..."
-        
-        # Create temporary file for tracking results
-        RESULTS_FILE="/tmp/download_results_$$.txt"
-        touch "$RESULTS_FILE"
-        
-        # Download each database in parallel with retry logic
-        jq -r 'to_entries[] | "\(.key)|\(.value)"' /tmp/download-urls.json | \
-        while IFS='|' read -r name url; do
-          (
-            echo "⏳ Downloading $name..."
-            RETRY_COUNT=0
-            MAX_RETRIES=3
-            RETRY_DELAY=5
-            
-            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              if curl -L -f -o "$name" "$url" --connect-timeout 30 --max-time 300 2>/dev/null; then
-                echo "✅ Downloaded $name"
-                echo "SUCCESS:$name" >> "$RESULTS_FILE"
-                break
-              else
-                RETRY_COUNT=$((RETRY_COUNT + 1))
-                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                  echo "⚠️  Download failed for $name, retrying in ${RETRY_DELAY}s (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
-                  sleep $RETRY_DELAY
-                else
-                  echo "❌ Failed to download $name after $MAX_RETRIES attempts"
-                  echo "FAILURE:$name" >> "$RESULTS_FILE"
-                fi
-              fi
-            done
-          ) &
-        done
-        
-        # Wait for all downloads to complete
-        wait
-        
-        # Process results
-        DOWNLOADS=$(grep -c "SUCCESS:" "$RESULTS_FILE" 2>/dev/null || echo "0")
-        FAILURES=$(grep -c "FAILURE:" "$RESULTS_FILE" 2>/dev/null || echo "0")
-        DATABASES=$(grep "SUCCESS:" "$RESULTS_FILE" 2>/dev/null | cut -d: -f2 | tr '\n' ',' | sed 's/,$//')
-        
-        # Clean up temporary file
-        rm -f "$RESULTS_FILE"
-        
-        # Set output
-        echo "databases=$DATABASES" >> $GITHUB_OUTPUT
-        
-        echo "📊 Download summary: $DOWNLOADS successful, $FAILURES failed"
-        
-        if [ "$FAILURES" -gt 0 ] && [ "${{ inputs.fail-on-error }}" = "true" ]; then
-          exit 1
-        fi
-
-    - name: Install validation dependencies
-      if: inputs.validate == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
-      shell: bash
-      run: |
-        echo "📦 Installing validation dependencies..."
-        pip install --quiet geoip2 IP2Location IP2Proxy
-
-    - name: Download validation script
-      if: inputs.validate == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
-      shell: bash
-      run: |
-        echo "📥 Downloading validation script..."
-        curl -s https://raw.githubusercontent.com/ytzcom/geoip/main/scripts/validate-geoip-action.py > /tmp/validate-geoip.py
-        chmod +x /tmp/validate-geoip.py
-
-    - name: Validate databases
-      if: inputs.validate == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
-      shell: bash
-      run: |
-        echo "🔍 Validating GeoIP databases..."
-        
-        # Run validation
-        if python /tmp/validate-geoip.py "${{ inputs.path }}" --databases "${{ steps.download.outputs.databases }}"; then
-          echo "✅ All databases validated successfully"
+        # Execute binary and capture output
+        if OUTPUT=$("$BINARY_PATH" "${ARGS[@]}" 2>&1); then
+          echo "✅ GeoIP updater completed successfully"
+          
+          # Parse output for downloaded databases (look for success messages)
+          if DATABASES=$(echo "$OUTPUT" | grep -o 'Downloaded: [^[:space:]]*' | sed 's/Downloaded: //' | tr '\n' ',' | sed 's/,$//' 2>/dev/null); then
+            if [ -n "$DATABASES" ]; then
+              echo "databases=$DATABASES" >> $GITHUB_OUTPUT
+              echo "📊 Downloaded databases: $DATABASES"
+            fi
+          fi
+          
+          # Alternative: list actual files in the directory
+          if [ -z "$DATABASES" ] && [ -d "${{ inputs.path }}" ]; then
+            ACTUAL_DATABASES=$(ls -1 "${{ inputs.path }}" 2>/dev/null | grep -E '\.(mmdb|BIN)$' | tr '\n' ',' | sed 's/,$//' || echo "")
+            if [ -n "$ACTUAL_DATABASES" ]; then
+              echo "databases=$ACTUAL_DATABASES" >> $GITHUB_OUTPUT
+              echo "📊 Found databases: $ACTUAL_DATABASES"
+            fi
+          fi
+          
+          # Get version info
+          if VERSION=$("$BINARY_PATH" --version 2>/dev/null | head -1); then
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "📋 Binary version: $VERSION"
+          fi
+          
+          # Show output if not quiet
+          if [ "${{ inputs.quiet }}" != "true" ]; then
+            echo "$OUTPUT"
+          fi
         else
-          echo "❌ Validation failed"
+          echo "❌ GeoIP updater failed:"
+          echo "$OUTPUT"
           if [ "${{ inputs.fail-on-error }}" = "true" ]; then
             exit 1
           fi
         fi
 
-    - name: Save to cache
-      if: steps.cache.outputs.cache-hit != 'true' && steps.download.outcome == 'success'
+    - name: Save databases to cache
+      if: steps.cache.outputs.cache-hit != 'true' && steps.go-binary.outcome == 'success'
       uses: actions/cache/save@v4
       with:
         path: ${{ inputs.path }}
-        key: ${{ env.CACHE_KEY }}
+        key: ${{ env.DB_CACHE_KEY }}
         enableCrossOsArchive: true
-
-    - name: Cleanup temporary files
-      if: always()
-      shell: bash
-      run: |
-        echo "🧹 Cleaning up temporary files..."
-        # Clean up temporary files created during the action
-        rm -f /tmp/download-urls.json 2>/dev/null || true
-        rm -f /tmp/download_results_*.txt 2>/dev/null || true
-        rm -f /tmp/validate-geoip.py 2>/dev/null || true
-        echo "✅ Cleanup completed"
 
     - name: Summary
       if: always()
@@ -317,15 +341,18 @@ runs:
       run: |
         echo "## 🌍 GeoIP Database Cache Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Cache Key**: ${{ env.CACHE_KEY }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cache Key**: ${{ env.DB_CACHE_KEY }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Cache Hit**: ${{ steps.cache.outputs.cache-hit || 'false' }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Path**: ${{ inputs.path }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Databases**: ${{ steps.download.outputs.databases || steps.cache-list.outputs.databases || 'None' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Platform**: ${{ steps.platform.outputs.os }}/${{ steps.platform.outputs.arch }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Binary**: ${{ steps.platform.outputs.binary-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: ${{ steps.go-binary.outputs.version || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Databases**: ${{ steps.go-binary.outputs.databases || steps.cache-list.outputs.databases || 'None' }}" >> $GITHUB_STEP_SUMMARY
         
         if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
           echo "- **Status**: ✅ Using cached databases" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ steps.download.outcome }}" = "success" ]; then
-          echo "- **Status**: ✅ Downloaded and cached databases" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ steps.go-binary.outcome }}" = "success" ]; then
+          echo "- **Status**: ✅ Downloaded and cached databases using Go binary" >> $GITHUB_STEP_SUMMARY
         else
           echo "- **Status**: ❌ Failed to download databases" >> $GITHUB_STEP_SUMMARY
         fi
