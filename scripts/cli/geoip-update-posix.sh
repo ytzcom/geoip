@@ -20,6 +20,9 @@
 #   --verbose            Enable verbose output
 #   --log-file FILE      Log output to file
 #   --validate           Only validate existing databases
+#   --list-databases     List all available databases and aliases
+#   --show-examples      Show usage examples for database selection
+#   --validate-only      Validate database names without downloading
 #   --help               Show this help message
 
 set -eu
@@ -189,6 +192,18 @@ parse_arguments() {
             --validate)
                 VALIDATE_ONLY=true
                 shift
+                ;;
+            --list-databases)
+                list_databases
+                exit 0
+                ;;
+            --show-examples)
+                show_examples
+                exit 0
+                ;;
+            --validate-only)
+                validate_database_names
+                exit 0
                 ;;
             --version)
                 echo "GeoIP Update Script (POSIX) v$VERSION"
@@ -516,36 +531,7 @@ download_databases() {
         return 1
     fi
     
-    # Filter databases if specific ones requested
-    if [ "$DATABASES" != "all" ]; then
-        local filtered_urls=""
-        local saved_ifs="$IFS"
-        IFS=','
-        for requested_db in $DATABASES; do
-            requested_db=$(echo "$requested_db" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            
-            # Check if this database is in the list (use grep to avoid subshell issue)
-            local db_line=$(echo "$urls" | grep "^${requested_db}|")
-            
-            if [ -n "$db_line" ]; then
-                if [ -n "$filtered_urls" ]; then
-                    filtered_urls=$(printf "%s\n%s" "$filtered_urls" "$db_line")
-                else
-                    filtered_urls="$db_line"
-                fi
-            else
-                log WARNING "Requested database not available: $requested_db"
-            fi
-        done
-        IFS="$saved_ifs"
-        
-        urls="$filtered_urls"
-        
-        if [ -z "$urls" ]; then
-            log ERROR "None of the requested databases are available"
-            return 1
-        fi
-    fi
+    # No filtering needed - API now handles smart database selection
     
     # Create temp directory for tracking parallel downloads
     TEMP_DIR=$(mktemp -d) || {
@@ -559,7 +545,11 @@ download_databases() {
     local pids=""
     local active_count=0
     
-    echo "$urls" | while IFS='|' read -r db_name url; do
+    # Save URLs to temp file to avoid subshell issue with pipe
+    local url_file="$TEMP_DIR/urls.txt"
+    echo "$urls" > "$url_file"
+    
+    while IFS='|' read -r db_name url; do
         # Wait if we have too many parallel downloads
         while [ $active_count -ge $MAX_PARALLEL ]; do
             # Check for completed downloads
@@ -591,16 +581,18 @@ download_databases() {
         local new_pid=$!
         pids="$pids $new_pid"
         active_count=$((active_count + 1))
-    done
+    done < "$url_file"
     
     # Wait for remaining downloads
     for pid in $pids; do
-        wait "$pid"
-        local exit_code=$?
-        if [ $exit_code -ne 0 ]; then
-            failed_count=$((failed_count + 1))
-        else
-            download_count=$((download_count + 1))
+        if [ -n "$pid" ]; then
+            wait "$pid"
+            local exit_code=$?
+            if [ $exit_code -ne 0 ]; then
+                failed_count=$((failed_count + 1))
+            else
+                download_count=$((download_count + 1))
+            fi
         fi
     done
     
@@ -676,18 +668,21 @@ validate_databases() {
     local valid=0
     local invalid=0
     
-    # Check for any database files (use find to properly handle glob patterns)
+    # Check for any database files (use shell globbing for better compatibility)
     local found_files=false
     
-    # Find all database files
-    for db_file in $(find "$TARGET_DIR" -maxdepth 1 -type f \( -name "*.mmdb" -o -name "*.MMDB" -o -name "*.BIN" -o -name "*.bin" \) 2>/dev/null); do
-        found_files=true
-        total=$((total + 1))
-        
-        if validate_database "$db_file"; then
-            valid=$((valid + 1))
-        else
-            invalid=$((invalid + 1))
+    # Find all database files using shell globbing
+    for pattern in "$TARGET_DIR"/*.mmdb "$TARGET_DIR"/*.MMDB "$TARGET_DIR"/*.BIN "$TARGET_DIR"/*.bin; do
+        # Check if the pattern matched any actual files
+        if [ -f "$pattern" ]; then
+            found_files=true
+            total=$((total + 1))
+            
+            if validate_database "$pattern"; then
+                valid=$((valid + 1))
+            else
+                invalid=$((invalid + 1))
+            fi
         fi
     done
     
@@ -703,6 +698,205 @@ validate_databases() {
     fi
     
     return 0
+}
+
+# Database discovery functions
+get_databases_endpoint() {
+    # Convert /auth endpoint to /databases endpoint
+    databases_endpoint=$(echo "$API_ENDPOINT" | sed 's|/auth$|/databases|')
+    echo "$databases_endpoint"
+}
+
+fetch_databases_info() {
+    databases_endpoint=$(get_databases_endpoint)
+    
+    log INFO "Fetching database information from: $databases_endpoint"
+    
+    response=$(curl -s --max-time 10 "$databases_endpoint" 2>/dev/null)
+    curl_exit=$?
+    
+    if [ $curl_exit -eq 0 ] && [ -n "$response" ] && echo "$response" | grep -q '"total"'; then
+        echo "$response"
+        return 0
+    else
+        log WARN "Database discovery not available, using fallback mode"
+        return 1
+    fi
+}
+
+list_databases() {
+    if [ -z "$API_ENDPOINT" ]; then
+        # Set default endpoint if not provided
+        API_ENDPOINT="$DEFAULT_ENDPOINT"
+    fi
+    
+    # Normalize endpoint
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    if fetch_databases_info >/dev/null 2>&1; then
+        db_info=$(fetch_databases_info)
+        echo "Available GeoIP Databases:"
+        echo "========================="
+        echo
+        
+        # Parse and display database information using POSIX-compatible tools
+        if command -v jq >/dev/null 2>&1; then
+            echo "$db_info" | jq -r '
+                "Total databases: " + (.total | tostring) + "\n",
+                "MaxMind databases (" + (.providers.maxmind.count | tostring) + "):",
+                (.providers.maxmind.databases[] | "  • " + .name + " (aliases: " + (.aliases | join(", ")) + ")"),
+                "\nIP2Location databases (" + (.providers.ip2location.count | tostring) + "):",
+                (.providers.ip2location.databases[] | "  • " + .name + " (aliases: " + (.aliases | join(", ")) + ")"),
+                "\nBulk Selection Options:",
+                "  • all - All databases",
+                "  • maxmind/all - All MaxMind databases", 
+                "  • ip2location/all - All IP2Location databases",
+                "\nUsage Notes:",
+                "  • Database names are case-insensitive",
+                "  • File extensions are optional in most cases",
+                "  • Use short aliases for easier selection"
+            ' 2>/dev/null
+        else
+            echo "Database discovery available but jq not installed."
+            echo "Install jq for formatted output or use the API directly:"
+            echo "  curl $(get_databases_endpoint)"
+        fi
+    else
+        echo "Database discovery not available."
+        echo "Using legacy database list:"
+        echo "  • GeoIP2-City.mmdb"
+        echo "  • GeoIP2-Country.mmdb"  
+        echo "  • GeoIP2-ISP.mmdb"
+        echo "  • GeoIP2-Connection-Type.mmdb"
+        echo "  • IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN"
+        echo "  • IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN"
+        echo "  • IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"
+    fi
+}
+
+show_examples() {
+    if [ -z "$API_ENDPOINT" ]; then
+        API_ENDPOINT="$DEFAULT_ENDPOINT"
+    fi
+    
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    if fetch_databases_info >/dev/null 2>&1; then
+        db_info=$(fetch_databases_info)
+        echo "Database Selection Examples:"
+        echo "===========================" 
+        echo
+        
+        if command -v jq >/dev/null 2>&1; then
+            echo "$db_info" | jq -r '
+                "Single Database Selection:",
+                (.examples.single_database[] | "  $0 --api-key YOUR_KEY --databases \"" + . + "\""),
+                "\nMultiple Database Selection:",
+                (.examples.multiple_databases[] | "  $0 --api-key YOUR_KEY --databases \"" + (. | join(",")) + "\""),
+                "\nBulk Selection:",
+                (.examples.bulk_selection[] | "  $0 --api-key YOUR_KEY --databases \"" + . + "\"")
+            ' 2>/dev/null
+        else
+            echo "Database discovery available but jq not installed for formatted examples."
+        fi
+    else
+        echo "Database Selection Examples (Legacy Mode):"
+        echo "=========================================="
+    fi
+    
+    echo
+    echo "Common Examples:"
+    echo "  # Download all databases"
+    echo "  $0 --api-key YOUR_KEY"
+    echo
+    echo "  # Download specific databases using aliases"
+    echo "  $0 --api-key YOUR_KEY --databases \"city,country\""
+    echo
+    echo "  # Download all MaxMind databases"
+    echo "  $0 --api-key YOUR_KEY --databases \"maxmind/all\""
+    echo
+    echo "  # Case insensitive selection"
+    echo "  $0 --api-key YOUR_KEY --databases \"CITY,ISP\""
+    echo
+    echo "  # Local testing with Docker API"
+    echo "  $0 --api-key test-key-1 --endpoint http://localhost:8080/auth --databases \"city\""
+}
+
+validate_database_names() {
+    if [ -z "$API_KEY" ]; then
+        log ERROR "API key required for validation. Use --api-key option or set GEOIP_API_KEY environment variable"
+        exit 1
+    fi
+    
+    if [ -z "$API_ENDPOINT" ]; then
+        API_ENDPOINT="$DEFAULT_ENDPOINT"
+    fi
+    
+    # Normalize endpoint  
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    case "$API_ENDPOINT" in
+        *geoipdb.net)
+            API_ENDPOINT="${API_ENDPOINT}/auth"
+            ;;
+    esac
+    
+    if [ "$DATABASES" = "all" ]; then
+        echo "✓ Database selection 'all' is valid"
+        return 0
+    fi
+    
+    # Convert comma-separated list to JSON array (POSIX-compatible)
+    db_array=""
+    # Use printf to handle comma splitting in POSIX sh
+    old_ifs="$IFS"
+    IFS=','
+    set -- $DATABASES
+    IFS="$old_ifs"
+    
+    for db; do
+        db=$(echo "$db" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [ -z "$db_array" ]; then
+            db_array="\"$db\""
+        else
+            db_array="$db_array,\"$db\""
+        fi
+    done
+    
+    json_payload="{\"databases\":[${db_array}]}"
+    
+    log INFO "Validating database names: $DATABASES"
+    
+    response=$(curl -s --max-time 10 \
+        -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$json_payload" \
+        "$API_ENDPOINT" 2>/dev/null)
+    
+    curl_exit=$?
+    
+    if [ $curl_exit -eq 0 ] && [ -n "$response" ]; then
+        if echo "$response" | grep -q '"detail"'; then
+            # Error response
+            error_msg=$(echo "$response" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
+            echo "✗ Validation failed: $error_msg"
+            return 1
+        else
+            # Success response with download URLs
+            db_count=$(echo "$response" | grep -o '\.mmdb\|\.BIN' | wc -l)
+            echo "✓ All database names are valid"
+            echo "✓ Resolved to $db_count database(s)"
+            
+            # Show resolved databases
+            echo "$response" | sed 's/,/\n/g' | grep -o '"[^"]*\.mmdb\|[^"]*\.BIN' | sed 's/"//g' | sort | while read -r db; do
+                echo "  → $db"
+            done
+        fi
+    else
+        echo "✗ Validation failed: Unable to connect to API"
+        return 1
+    fi
 }
 
 # Main function

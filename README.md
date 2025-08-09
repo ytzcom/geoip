@@ -55,7 +55,14 @@ docker run --rm \
   -v $(pwd)/data:/data \
   ytzcom/geoip-updater:latest
 
-# Download specific databases only
+# Download specific databases using aliases (case-insensitive)
+docker run --rm \
+  -e GEOIP_API_KEY=your-api-key \
+  -v $(pwd)/data:/data \
+  ytzcom/geoip-updater:latest \
+  --databases city,country
+
+# Or use full names
 docker run --rm \
   -e GEOIP_API_KEY=your-api-key \
   -v $(pwd)/data:/data \
@@ -443,7 +450,7 @@ export GEOIP_API_KEY=your-api-key
 | **GEOIP_SETUP_CRON** | `true` | Installs automatic daily updates |
 | **GEOIP_UPDATE_SCHEDULE** | `0 2 * * *` | Cron schedule (2 AM daily) |
 | **GEOIP_FAIL_ON_ERROR** | `false` | Exit container if download fails |
-| **GEOIP_DATABASES** | `all` | Comma-separated list or "all" |
+| **GEOIP_DATABASES** | `all` | Comma-separated list, aliases, or "all"/"maxmind/all"/"ip2location/all" |
 
 ### Health Checks
 
@@ -591,10 +598,18 @@ docker run --rm \
 
 ### Example 5: Custom Database Selection
 ```dockerfile
-# Only download specific databases, no auto-updates
-ENV GEOIP_DATABASES="GeoIP2-City.mmdb,GeoIP2-Country.mmdb" \
+# Using database aliases (case-insensitive)
+ENV GEOIP_DATABASES="city,country,isp" \
     GEOIP_DOWNLOAD_ON_START=true \
     GEOIP_SETUP_CRON=false  # No auto-updates
+
+# Or download all MaxMind databases only
+ENV GEOIP_DATABASES="maxmind/all" \
+    GEOIP_DOWNLOAD_ON_START=true
+
+# Or mix aliases with full names
+ENV GEOIP_DATABASES="city,GeoIP2-ISP.mmdb,px2" \
+    GEOIP_DOWNLOAD_ON_START=true
 ```
 
 ## 🔍 Troubleshooting Docker Integration

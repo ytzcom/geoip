@@ -19,6 +19,9 @@
 #   -n, --no-lock           Don't use lock file
 #   -r, --retries NUM       Max retries (default: 3)
 #   -t, --timeout SEC       Download timeout in seconds (default: 300)
+#   -L, --list-databases    List all available databases and aliases
+#   -E, --show-examples     Show usage examples for database selection
+#   -V, --validate-only     Validate database names without downloading
 #   -h, --help              Show this help message
 #
 # Environment Variables:
@@ -100,14 +103,14 @@ log() {
                 ;;
             INFO)
                 if [[ "$VERBOSE_MODE" == "true" ]]; then
-                    echo -e "${BLUE}[$level]${NC} $message"
+                    echo -e "${BLUE}[$level]${NC} $message" >&2
                 fi
                 ;;
             SUCCESS)
-                echo -e "${GREEN}[$level]${NC} $message"
+                echo -e "${GREEN}[$level]${NC} $message" >&2
                 ;;
             *)
-                echo "[$level] $message"
+                echo "[$level] $message" >&2
                 ;;
         esac
     elif [[ "$level" == "ERROR" ]]; then
@@ -170,6 +173,18 @@ parse_args() {
             -t|--timeout)
                 TIMEOUT="$2"
                 shift 2
+                ;;
+            -L|--list-databases)
+                list_databases
+                exit 0
+                ;;
+            -E|--show-examples)
+                show_examples
+                exit 0
+                ;;
+            -V|--validate-only)
+                validate_database_names
+                exit 0
                 ;;
             -h|--help)
                 show_help
@@ -573,6 +588,196 @@ update_databases() {
         if [[ $failed_count -gt 0 ]]; then
             error "Failed to download $failed_count databases"
         fi
+}
+
+# Database discovery functions
+get_databases_endpoint() {
+    # Convert /auth endpoint to /databases endpoint
+    local databases_endpoint="${API_ENDPOINT%/auth}/databases"
+    echo "$databases_endpoint"
+}
+
+fetch_databases_info() {
+    local databases_endpoint=$(get_databases_endpoint)
+    local response
+    
+    log INFO "Fetching database information from: $databases_endpoint"
+    
+    response=$(curl -s --max-time 10 "$databases_endpoint" 2>/dev/null)
+    local exit_code=$?
+    
+    if [[ $exit_code -eq 0 ]] && [[ -n "$response" ]] && echo "$response" | grep -q '"total"'; then
+        echo "$response"
+        return 0
+    else
+        log WARN "Database discovery not available, using fallback mode"
+        return 1
+    fi
+}
+
+list_databases() {
+    if [[ -z "$API_ENDPOINT" ]]; then
+        # Set default endpoint if not provided
+        API_ENDPOINT="$DEFAULT_ENDPOINT"
+    fi
+    
+    # Normalize endpoint
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    local db_info
+    if db_info=$(fetch_databases_info); then
+        echo "Available GeoIP Databases:"
+        echo "========================="
+        echo
+        
+        # Parse and display database information
+        echo "$db_info" | jq -r '
+            "Total databases: " + (.total | tostring) + "\n",
+            "MaxMind databases (" + (.providers.maxmind.count | tostring) + "):",
+            (.providers.maxmind.databases[] | "  • " + .name + " (aliases: " + (.aliases | join(", ")) + ")"),
+            "\nIP2Location databases (" + (.providers.ip2location.count | tostring) + "):",
+            (.providers.ip2location.databases[] | "  • " + .name + " (aliases: " + (.aliases | join(", ")) + ")"),
+            "\nBulk Selection Options:",
+            "  • all - All databases",
+            "  • maxmind/all - All MaxMind databases", 
+            "  • ip2location/all - All IP2Location databases",
+            "\nUsage Notes:",
+            "  • Database names are case-insensitive",
+            "  • File extensions are optional in most cases",
+            "  • Use short aliases for easier selection"
+        ' 2>/dev/null || {
+            # Fallback if jq is not available
+            echo "Database discovery available but jq not installed."
+            echo "Install jq for formatted output or use the API directly:"
+            echo "  curl $(get_databases_endpoint)"
+        }
+    else
+        echo "Database discovery not available."
+        echo "Using legacy database list:"
+        echo "  • GeoIP2-City.mmdb"
+        echo "  • GeoIP2-Country.mmdb"  
+        echo "  • GeoIP2-ISP.mmdb"
+        echo "  • GeoIP2-Connection-Type.mmdb"
+        echo "  • IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN"
+        echo "  • IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN"
+        echo "  • IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"
+    fi
+}
+
+show_examples() {
+    if [[ -z "$API_ENDPOINT" ]]; then
+        API_ENDPOINT="$DEFAULT_ENDPOINT"
+    fi
+    
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    local db_info
+    if db_info=$(fetch_databases_info); then
+        echo "Database Selection Examples:"
+        echo "===========================" 
+        echo
+        
+        echo "$db_info" | jq -r '
+            "Single Database Selection:",
+            (.examples.single_database[] | "  $0 --api-key YOUR_KEY --databases \"" + . + "\""),
+            "\nMultiple Database Selection:",
+            (.examples.multiple_databases[] | "  $0 --api-key YOUR_KEY --databases \"" + (. | join(",")) + "\""),
+            "\nBulk Selection:",
+            (.examples.bulk_selection[] | "  $0 --api-key YOUR_KEY --databases \"" + . + "\"")
+        ' 2>/dev/null || {
+            echo "Database discovery available but jq not installed for formatted examples."
+        }
+    else
+        echo "Database Selection Examples (Legacy Mode):"
+        echo "=========================================="
+    fi
+    
+    echo
+    echo "Common Examples:"
+    echo "  # Download all databases"
+    echo "  $SCRIPT_NAME --api-key YOUR_KEY"
+    echo
+    echo "  # Download specific databases using aliases"
+    echo "  $SCRIPT_NAME --api-key YOUR_KEY --databases \"city,country\""
+    echo
+    echo "  # Download all MaxMind databases"
+    echo "  $SCRIPT_NAME --api-key YOUR_KEY --databases \"maxmind/all\""
+    echo
+    echo "  # Case insensitive selection"
+    echo "  $SCRIPT_NAME --api-key YOUR_KEY --databases \"CITY,ISP\""
+    echo
+    echo "  # Local testing with Docker API"
+    echo "  $SCRIPT_NAME --api-key test-key-1 --endpoint http://localhost:8080/auth --databases \"city\""
+}
+
+validate_database_names() {
+    if [[ -z "$API_KEY" ]]; then
+        error "API key required for validation. Use -k option or set GEOIP_API_KEY environment variable"
+    fi
+    
+    if [[ -z "$API_ENDPOINT" ]]; then
+        API_ENDPOINT="$DEFAULT_ENDPOINT"
+    fi
+    
+    # Normalize endpoint  
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    if [[ "$API_ENDPOINT" =~ geoipdb\.net$ ]]; then
+        API_ENDPOINT="${API_ENDPOINT}/auth"
+    fi
+    
+    if [[ "$DATABASES" == "all" ]]; then
+        echo "✓ Database selection 'all' is valid"
+        return 0
+    fi
+    
+    # Convert comma-separated list to JSON array
+    local db_array=""
+    IFS=',' read -ra db_names <<< "$DATABASES"
+    for db in "${db_names[@]}"; do
+        db=$(echo "$db" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [[ -z "$db_array" ]]; then
+            db_array="\"$db\""
+        else
+            db_array="$db_array,\"$db\""
+        fi
+    done
+    
+    local json_payload="{\"databases\":[${db_array}]}"
+    local response
+    
+    log INFO "Validating database names: $DATABASES"
+    
+    response=$(curl -s --max-time 10 \
+        -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$json_payload" \
+        "$API_ENDPOINT" 2>/dev/null)
+    
+    local exit_code=$?
+    
+    if [[ $exit_code -eq 0 ]] && [[ -n "$response" ]]; then
+        if echo "$response" | grep -q '"detail"'; then
+            # Error response
+            local error_msg=$(echo "$response" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
+            echo "✗ Validation failed: $error_msg"
+            return 1
+        else
+            # Success response with download URLs
+            local db_count=$(echo "$response" | grep -o '\.mmdb\|\.BIN' | wc -l)
+            echo "✓ All database names are valid"
+            echo "✓ Resolved to $db_count database(s)"
+            
+            # Show resolved databases
+            echo "$response" | sed 's/,/\n/g' | grep -o '"[^"]*\.mmdb\|[^"]*\.BIN' | sed 's/"//g' | sort | while read -r db; do
+                echo "  → $db"
+            done
+        fi
+    else
+        echo "✗ Validation failed: Unable to connect to API"
+        return 1
+    fi
 }
 
 # Main execution
