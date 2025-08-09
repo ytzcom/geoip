@@ -251,6 +251,24 @@ class GeoIPUpdater:
         self.temp_dir: Optional[Path] = None
         self.downloaded_files: Set[str] = set()
         self.failed_files: Set[str] = set()
+        
+        # Clean and normalize the API endpoint
+        self._normalize_endpoint()
+    
+    def _normalize_endpoint(self):
+        """Normalize the API endpoint URL, auto-appending /auth if needed."""
+        # Remove trailing slashes and whitespace
+        endpoint = self.config.api_endpoint.rstrip('/ \t\n\r')
+        
+        # Auto-append /auth if it's the base geoipdb.net domain
+        if endpoint in ('https://geoipdb.net', 'http://geoipdb.net'):
+            endpoint = f"{endpoint}/auth"
+            logger.info(f"Appended /auth to endpoint: {endpoint}")
+        elif not endpoint.endswith('/auth'):
+            # For other endpoints, just log what we're using
+            logger.debug(f"Using endpoint as provided: {endpoint}")
+        
+        self.config.api_endpoint = endpoint
     
     async def __aenter__(self):
         """Async context manager entry."""

@@ -25,6 +25,16 @@ GEOIP_API_ENDPOINT="${GEOIP_API_ENDPOINT:-https://geoipdb.net/auth}"
 GEOIP_DATABASES="${GEOIP_DATABASES:-all}"
 GEOIP_LOG_FILE="${GEOIP_LOG_FILE:-}"
 GEOIP_QUIET_MODE="${GEOIP_QUIET_MODE:-false}"
+GEOIP_SCRIPT_TYPE="${GEOIP_SCRIPT_TYPE:-auto}"  # auto, bash, posix, python, powershell, go
+
+# Environment detection variables
+HAVE_BASH=false
+HAVE_PYTHON_FULL=false
+HAVE_POWERSHELL=false
+HAVE_GO_BINARY=false
+SELECTED_SCRIPT=""
+DETECTED_ARCH=""
+GO_BINARY_PATH=""
 
 # Logging functions with consistent format
 geoip_log_info() {
@@ -41,6 +51,166 @@ geoip_log_warning() {
 
 geoip_log_success() {
     echo "[GeoIP] SUCCESS: $1"
+}
+
+# Detect system architecture
+geoip_detect_architecture() {
+    local arch_raw
+    arch_raw=$(uname -m 2>/dev/null || echo "unknown")
+    
+    case "$arch_raw" in
+        x86_64|amd64)
+            DETECTED_ARCH="amd64"
+            ;;
+        aarch64|arm64)
+            DETECTED_ARCH="arm64"
+            ;;
+        armv7l|armhf|arm)
+            DETECTED_ARCH="arm"
+            ;;
+        i386|i686)
+            DETECTED_ARCH="386"
+            ;;
+        *)
+            DETECTED_ARCH="unknown"
+            geoip_log_warning "Unknown architecture: $arch_raw"
+            ;;
+    esac
+    
+    geoip_log_info "Detected architecture: $DETECTED_ARCH"
+}
+
+# Detect available runtimes and shells in the environment
+geoip_detect_environment() {
+    geoip_log_info "Detecting environment capabilities..."
+    
+    # First detect architecture
+    geoip_detect_architecture
+    
+    # Check for Bash
+    if command -v bash >/dev/null 2>&1; then
+        HAVE_BASH=true
+    fi
+    
+    # Check for Python with required dependencies
+    if command -v python3 >/dev/null 2>&1; then
+        # Check if aiohttp is available for async functionality
+        if python3 -c "import aiohttp" 2>/dev/null; then
+            HAVE_PYTHON_FULL=true
+        elif [ -f /opt/geoip/geoip-update.py ]; then
+            # Python is available but might work without aiohttp in basic mode
+            geoip_log_warning "Python found but aiohttp not available - Python script may have limited functionality"
+        fi
+    fi
+    
+    # Check for PowerShell Core
+    if command -v pwsh >/dev/null 2>&1; then
+        HAVE_POWERSHELL=true
+    fi
+    
+    # Check for architecture-specific Go binary
+    if [ "$DETECTED_ARCH" = "amd64" ] && [ -f /opt/geoip/geoip-update-amd64 ] && [ -x /opt/geoip/geoip-update-amd64 ]; then
+        HAVE_GO_BINARY=true
+        GO_BINARY_PATH="/opt/geoip/geoip-update-amd64"
+        geoip_log_info "Found Go binary for AMD64 architecture"
+    elif [ "$DETECTED_ARCH" = "arm64" ] && [ -f /opt/geoip/geoip-update-arm64 ] && [ -x /opt/geoip/geoip-update-arm64 ]; then
+        HAVE_GO_BINARY=true
+        GO_BINARY_PATH="/opt/geoip/geoip-update-arm64"
+        geoip_log_info "Found Go binary for ARM64 architecture"
+    elif [ -f /opt/geoip/geoip-update ] && [ -x /opt/geoip/geoip-update ]; then
+        # Fallback to generic binary if it exists (backwards compatibility)
+        HAVE_GO_BINARY=true
+        GO_BINARY_PATH="/opt/geoip/geoip-update"
+        geoip_log_info "Found generic Go binary"
+    else
+        geoip_log_info "No Go binary available for architecture: $DETECTED_ARCH"
+    fi
+    
+    # Log detected capabilities
+    geoip_log_info "Environment: Bash=$HAVE_BASH Python=$HAVE_PYTHON_FULL PowerShell=$HAVE_POWERSHELL Go=$HAVE_GO_BINARY"
+}
+
+# Select the best available script based on environment and user preference
+geoip_select_best_script() {
+    # If user specified a script type, try to use it
+    case "$GEOIP_SCRIPT_TYPE" in
+        bash)
+            if [ "$HAVE_BASH" = true ] && [ -f /opt/geoip/geoip-update.sh ]; then
+                SELECTED_SCRIPT="/opt/geoip/geoip-update.sh"
+                geoip_log_info "Using Bash script (user specified)"
+            else
+                geoip_log_warning "Bash script requested but not available"
+            fi
+            ;;
+        posix)
+            if [ -f /opt/geoip/geoip-update-posix.sh ]; then
+                SELECTED_SCRIPT="/opt/geoip/geoip-update-posix.sh"
+                geoip_log_info "Using POSIX script (user specified)"
+            else
+                geoip_log_warning "POSIX script requested but not available"
+            fi
+            ;;
+        python)
+            if [ "$HAVE_PYTHON_FULL" = true ] && [ -f /opt/geoip/geoip-update.py ]; then
+                SELECTED_SCRIPT="python3 /opt/geoip/geoip-update.py"
+                geoip_log_info "Using Python script (user specified)"
+            else
+                geoip_log_warning "Python script requested but not available or missing dependencies"
+            fi
+            ;;
+        powershell)
+            if [ "$HAVE_POWERSHELL" = true ] && [ -f /opt/geoip/geoip-update.ps1 ]; then
+                SELECTED_SCRIPT="pwsh /opt/geoip/geoip-update.ps1"
+                geoip_log_info "Using PowerShell script (user specified)"
+            else
+                geoip_log_warning "PowerShell script requested but not available"
+            fi
+            ;;
+        go)
+            if [ "$HAVE_GO_BINARY" = true ] && [ -n "$GO_BINARY_PATH" ]; then
+                SELECTED_SCRIPT="$GO_BINARY_PATH"
+                geoip_log_info "Using Go binary (user specified): $GO_BINARY_PATH"
+            else
+                geoip_log_warning "Go binary requested but not available for architecture: $DETECTED_ARCH"
+            fi
+            ;;
+        auto|*)
+            # Auto-detect best option
+            ;;
+    esac
+    
+    # If no script selected yet, auto-detect based on priority
+    if [ -z "$SELECTED_SCRIPT" ]; then
+        # Priority order:
+        # 1. Go binary (fastest, self-contained)
+        # 2. Python (async, parallel downloads)
+        # 3. Bash (full features, widely available)
+        # 4. PowerShell (for Windows containers)
+        # 5. POSIX (maximum compatibility, works everywhere)
+        
+        if [ "$HAVE_GO_BINARY" = true ] && [ -n "$GO_BINARY_PATH" ]; then
+            SELECTED_SCRIPT="$GO_BINARY_PATH"
+            geoip_log_info "Auto-selected Go binary (fastest): $GO_BINARY_PATH"
+        elif [ "$HAVE_PYTHON_FULL" = true ] && [ -f /opt/geoip/geoip-update.py ]; then
+            SELECTED_SCRIPT="python3 /opt/geoip/geoip-update.py"
+            geoip_log_info "Auto-selected Python script (async downloads)"
+        elif [ "$HAVE_BASH" = true ] && [ -f /opt/geoip/geoip-update.sh ]; then
+            SELECTED_SCRIPT="/opt/geoip/geoip-update.sh"
+            geoip_log_info "Auto-selected Bash script (full features)"
+        elif [ "$HAVE_POWERSHELL" = true ] && [ -f /opt/geoip/geoip-update.ps1 ]; then
+            SELECTED_SCRIPT="pwsh /opt/geoip/geoip-update.ps1"
+            geoip_log_info "Auto-selected PowerShell script"
+        elif [ -f /opt/geoip/geoip-update-posix.sh ]; then
+            SELECTED_SCRIPT="/opt/geoip/geoip-update-posix.sh"
+            geoip_log_info "Auto-selected POSIX script (maximum compatibility)"
+        else
+            geoip_log_error "No suitable GeoIP update script found!"
+            return 1
+        fi
+    fi
+    
+    geoip_log_info "Selected script: $SELECTED_SCRIPT"
+    return 0
 }
 
 # Check if GeoIP databases need to be downloaded
@@ -102,15 +272,14 @@ geoip_download_databases() {
         cmd_args="$cmd_args --databases '$GEOIP_DATABASES'"
     fi
     
-    # Use POSIX-compliant script for better compatibility (works on Alpine)
-    # Falls back to bash version if POSIX version not available
-    local script_to_use="/opt/geoip/geoip-update.sh"
-    if [ -f /opt/geoip/geoip-update-posix.sh ]; then
-        script_to_use="/opt/geoip/geoip-update-posix.sh"
-        geoip_log_info "Using POSIX-compliant script for better compatibility"
+    # Detect environment and select best script if not done yet
+    if [ -z "$SELECTED_SCRIPT" ]; then
+        geoip_detect_environment
+        geoip_select_best_script || return 1
     fi
     
-    if sh -c "$script_to_use $cmd_args"; then
+    # Execute the selected script with arguments
+    if sh -c "$SELECTED_SCRIPT $cmd_args"; then
         geoip_log_success "GeoIP databases downloaded successfully!"
         return 0
     else

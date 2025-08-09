@@ -92,6 +92,19 @@ param(
 # Set error action preference
 $ErrorActionPreference = 'Stop'
 
+# Clean and normalize the API endpoint
+$ApiEndpoint = $ApiEndpoint.TrimEnd('/', ' ', "`t", "`n", "`r")
+
+# Auto-append /auth if it's the base geoipdb.net domain
+if ($ApiEndpoint -eq 'https://geoipdb.net' -or $ApiEndpoint -eq 'http://geoipdb.net') {
+    $ApiEndpoint = "$ApiEndpoint/auth"
+    Write-Host "Appended /auth to endpoint: $ApiEndpoint" -ForegroundColor Cyan
+}
+elseif (-not $ApiEndpoint.EndsWith('/auth')) {
+    # For other endpoints, just note what we're using
+    Write-Verbose "Using endpoint as provided: $ApiEndpoint"
+}
+
 # Script configuration
 $script:ScriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
 $script:TempPath = if ($env:TEMP) { $env:TEMP } elseif ($env:TMPDIR) { $env:TMPDIR } elseif ($env:TMP) { $env:TMP } else { "/tmp" }
