@@ -135,7 +135,7 @@ matrix:
 
 Build flags are set in the workflow:
 ```yaml
-BUILD_FLAGS="-ldflags=\"-s -w -X main.version=$VERSION\" -trimpath"
+BUILD_FLAGS="-ldflags='-s -w -X main.version=$VERSION' -trimpath"
 ```
 
 - `-s -w`: Strip debug information (smaller binaries)
