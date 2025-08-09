@@ -12,26 +12,26 @@ This is an automated GeoIP database updater that downloads MaxMind and IP2Locati
 
 ```bash
 # Test MaxMind download (requires MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY)
-./scripts/download-maxmind.sh temp/compressed/maxmind <account_id> <license_key>
+./github-actions/download-maxmind.sh temp/compressed/maxmind <account_id> <license_key>
 
 # Test IP2Location download (requires IP2LOCATION_TOKEN)
-./scripts/download-ip2location.sh temp/compressed/ip2location <token>
+./github-actions/download-ip2location.sh temp/compressed/ip2location <token>
 
 # Extract databases
-./scripts/extract-databases.sh
+./github-actions/extract-databases.sh
 
 # Validate databases
-python scripts/validate-databases.py temp/raw/
+python github-actions/validate-databases.py temp/raw/
 ```
 
 ### Testing S3 Uploads
 
 ```bash
 # Test upload (requires AWS credentials configured)
-./scripts/upload-to-s3.sh temp/raw/maxmind <bucket> raw/maxmind "*.mmdb" "application/octet-stream"
+./github-actions/upload-to-s3.sh temp/raw/maxmind <bucket> raw/maxmind "*.mmdb" "application/octet-stream"
 
 # Check database status on S3
-./scripts/check-database-status.sh <bucket-name>
+./github-actions/check-database-status.sh <bucket-name>
 ```
 
 ### Running the Workflow Locally

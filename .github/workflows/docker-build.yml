@@ -10,8 +10,8 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/cli/**'
-      - 'infrastructure/docker-api/**'
+      - 'cli/**'
+      - 'api-server/**'
       - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
@@ -62,7 +62,7 @@ jobs:
       - name: Generate cache key
         id: cache
         run: |
-          echo "key=docker-${{ runner.os }}-${{ hashFiles('scripts/cli/requirements.txt', 'scripts/cli/go/go.mod', 'infrastructure/docker-api/requirements.txt') }}" >> $GITHUB_OUTPUT
+          echo "key=docker-${{ runner.os }}-${{ hashFiles('cli/requirements.txt', 'cli/go/go.mod', 'api-server/requirements.txt') }}" >> $GITHUB_OUTPUT
 
   build-matrix:
     runs-on: ubuntu-latest
@@ -74,50 +74,50 @@ jobs:
           # Scripts-Only Image for Integration
           - name: geoip-scripts
             context: .
-            dockerfile: docker/scripts/Dockerfile
+            dockerfile: docker-scripts/Dockerfile
             description: "GeoIP scripts-only image for easy Docker integration"
             category: scripts
             
           # CLI Client Images
           - name: geoip-updater
-            context: ./scripts/cli
-            dockerfile: docker/Dockerfile
+            context: ./cli
+            dockerfile: docker-images/cli/Dockerfile
             description: "GeoIP database updater - Python CLI"
             category: cli
             
           - name: geoip-updater-cron
-            context: ./scripts/cli
-            dockerfile: docker/Dockerfile.cron-secure
+            context: ./cli
+            dockerfile: docker-images/cli/Dockerfile.cron-secure
             description: "GeoIP database updater - Secure Cron with supercronic"
             category: cli
             
           - name: geoip-updater-k8s
-            context: ./scripts/cli
+            context: ./cli
             dockerfile: k8s/Dockerfile
             description: "GeoIP database updater - Kubernetes optimized"
             category: cli
             
           - name: geoip-updater-go
-            context: ./scripts/cli
-            dockerfile: docker/Dockerfile.go
+            context: ./cli
+            dockerfile: docker-images/cli/Dockerfile.go
             description: "GeoIP database updater - Go binary"
             category: cli
 
           # API Server Images
           - name: geoip-api
-            context: ./infrastructure/docker-api
+            context: ./api-server
             dockerfile: Dockerfile
             description: "GeoIP Authentication API Server - FastAPI with S3 backend"
             category: api
             
           - name: geoip-api-nginx
-            context: ./infrastructure/docker-api
+            context: ./api-server
             dockerfile: Dockerfile.nginx
             description: "GeoIP Authentication API Server - Production with Nginx reverse proxy"
             category: api
             
           - name: geoip-api-dev
-            context: ./infrastructure/docker-api
+            context: ./api-server
             dockerfile: Dockerfile.dev
             description: "GeoIP Authentication API Server - Development with debug features"
             category: api
@@ -171,7 +171,7 @@ jobs:
             org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.vendor=YTZ
             org.opencontainers.image.category=${{ matrix.category }}
-            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip-updater/blob/main/${{ matrix.category == 'api' && 'infrastructure/docker-api' || 'scripts/cli' }}/README.md
+            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip-updater/blob/main/${{ matrix.category == 'api' && 'api-server' || 'cli' }}/README.md
             maintainer=YTZ
 
       - name: Build and push Docker image
@@ -254,7 +254,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
           repository: ${{ env.DOCKER_NAMESPACE }}/geoip-updater
-          readme-filepath: ./scripts/cli/README.md
+          readme-filepath: ./cli/README.md
           short-description: "GeoIP database updater with support for MaxMind and IP2Location"
 
   sign-images:

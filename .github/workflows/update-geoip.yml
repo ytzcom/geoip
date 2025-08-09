@@ -63,7 +63,7 @@ jobs:
       # Make scripts executable
       - name: Make scripts executable
         run: |
-          chmod +x scripts/*.sh
+          chmod +x github-actions/*.sh
       
       # Download MaxMind databases
       - name: Download MaxMind databases
@@ -75,7 +75,7 @@ jobs:
           if [ "$DEBUG_MODE" = "true" ]; then
             set -x
           fi
-          ./scripts/download-maxmind.sh \
+          ./github-actions/download-maxmind.sh \
             "temp/compressed/maxmind" \
             "${{ vars.MAXMIND_ACCOUNT_ID }}" \
             "${{ secrets.MAXMIND_LICENSE_KEY }}" || {
@@ -93,7 +93,7 @@ jobs:
           if [ "$DEBUG_MODE" = "true" ]; then
             set -x
           fi
-          ./scripts/download-ip2location.sh \
+          ./github-actions/download-ip2location.sh \
             "temp/compressed/ip2location" \
             "${{ secrets.IP2LOCATION_TOKEN }}" || {
             echo "error=IP2Location download failed" >> $GITHUB_OUTPUT
@@ -107,7 +107,7 @@ jobs:
           echo "Uploading compressed files to S3..."
           
           # Upload MaxMind tar.gz files
-          ./scripts/upload-to-s3.sh \
+          ./github-actions/upload-to-s3.sh \
             "temp/compressed/maxmind" \
             "${{ env.S3_BUCKET }}" \
             "compressed/maxmind" \
@@ -115,7 +115,7 @@ jobs:
             "application/gzip"
           
           # Upload IP2Location zip files
-          ./scripts/upload-to-s3.sh \
+          ./github-actions/upload-to-s3.sh \
             "temp/compressed/ip2location" \
             "${{ env.S3_BUCKET }}" \
             "compressed/ip2location" \
@@ -126,13 +126,13 @@ jobs:
       
       - name: Extract databases
         run: |
-          ./scripts/extract-databases.sh
+          ./github-actions/extract-databases.sh
       
       - name: Validate databases
         run: |
           set -euo pipefail
           echo "Validating extracted databases..."
-          python scripts/validate-databases.py temp/raw/
+          python github-actions/validate-databases.py temp/raw/
       
       - name: Upload raw files to S3
         run: |
@@ -140,7 +140,7 @@ jobs:
           echo "Uploading raw files to S3..."
           
           # Upload MaxMind MMDB files
-          ./scripts/upload-to-s3.sh \
+          ./github-actions/upload-to-s3.sh \
             "temp/raw/maxmind" \
             "${{ env.S3_BUCKET }}" \
             "raw/maxmind" \
@@ -148,7 +148,7 @@ jobs:
             "application/octet-stream"
           
           # Upload IP2Location BIN files
-          ./scripts/upload-to-s3.sh \
+          ./github-actions/upload-to-s3.sh \
             "temp/raw/ip2location" \
             "${{ env.S3_BUCKET }}" \
             "raw/ip2location" \
@@ -178,8 +178,8 @@ jobs:
       - name: Update README
         run: |
           set -euo pipefail
-          chmod +x scripts/update-readme.sh
-          ./scripts/update-readme.sh "${{ steps.metadata.outputs.timestamp }}" \
+          chmod +x github-actions/update-readme.sh
+          ./github-actions/update-readme.sh "${{ steps.metadata.outputs.timestamp }}" \
                                     "${{ steps.metadata.outputs.total_count }}" \
                                     "${{ steps.metadata.outputs.maxmind_count }}" \
                                     "${{ steps.metadata.outputs.ip2location_count }}" \

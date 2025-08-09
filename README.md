@@ -75,7 +75,7 @@ docker run --rm \
 ```bash
 # Clone the repository
 git clone https://github.com/ytzcom/geoip.git
-cd geoip-updater/scripts/cli
+cd geoip-updater/cli
 
 # Run with your preferred script
 ./geoip-update.sh -k YOUR_API_KEY        # Bash (Linux/macOS)
@@ -121,39 +121,39 @@ python geoip-update.py -k YOUR_API_KEY   # Python (cross-platform)
 
 ```bash
 # Basic usage with API key
-./scripts/cli/geoip-update.sh -k YOUR_API_KEY
+./cli/geoip-update.sh -k YOUR_API_KEY
 
 # Download to specific directory
-./scripts/cli/geoip-update.sh -k YOUR_API_KEY -d /var/lib/geoip
+./cli/geoip-update.sh -k YOUR_API_KEY -d /var/lib/geoip
 
 # Download specific databases only
-./scripts/cli/geoip-update.sh -k YOUR_API_KEY -D "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
+./cli/geoip-update.sh -k YOUR_API_KEY -D "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
 
 # Use custom API endpoint
-./scripts/cli/geoip-update.sh -k YOUR_API_KEY -e https://your-api.example.com/auth
+./cli/geoip-update.sh -k YOUR_API_KEY -e https://your-api.example.com/auth
 
 # With environment variables
 export GEOIP_API_KEY="your_api_key"
 export GEOIP_TARGET_DIR="/var/lib/geoip"
-./scripts/cli/geoip-update.sh
+./cli/geoip-update.sh
 ```
 
 ### Python Script (Cross-platform)
 
 ```bash
 # Basic usage
-python scripts/cli/geoip-update.py --api-key YOUR_API_KEY
+python cli/geoip-update.py --api-key YOUR_API_KEY
 
 # With configuration file
-python scripts/cli/geoip-update.py --config config.yaml
+python cli/geoip-update.py --config config.yaml
 
 # Download specific databases
-python scripts/cli/geoip-update.py -k YOUR_API_KEY \
+python cli/geoip-update.py -k YOUR_API_KEY \
   --databases GeoIP2-City.mmdb \
   --databases GeoIP2-Country.mmdb
 
 # Verbose output with custom directory
-python scripts/cli/geoip-update.py -k YOUR_API_KEY \
+python cli/geoip-update.py -k YOUR_API_KEY \
   --target-dir /opt/geoip \
   --verbose
 ```
@@ -162,17 +162,17 @@ python scripts/cli/geoip-update.py -k YOUR_API_KEY \
 
 ```powershell
 # Basic usage
-.\scripts\cli\geoip-update.ps1 -ApiKey YOUR_API_KEY
+.\cli\geoip-update.ps1 -ApiKey YOUR_API_KEY
 
 # Save to specific directory
-.\scripts\cli\geoip-update.ps1 -ApiKey YOUR_API_KEY -TargetDir "C:\GeoIP"
+.\cli\geoip-update.ps1 -ApiKey YOUR_API_KEY -TargetDir "C:\GeoIP"
 
 # Use Windows Credential Manager (secure storage)
-.\scripts\cli\geoip-update.ps1 -SaveCredentials
-.\scripts\cli\geoip-update.ps1  # Uses saved credentials
+.\cli\geoip-update.ps1 -SaveCredentials
+.\cli\geoip-update.ps1  # Uses saved credentials
 
 # Download specific databases
-.\scripts\cli\geoip-update.ps1 -ApiKey YOUR_API_KEY `
+.\cli\geoip-update.ps1 -ApiKey YOUR_API_KEY `
   -Databases @("GeoIP2-City.mmdb", "GeoIP2-Country.mmdb")
 ```
 
@@ -180,7 +180,7 @@ python scripts/cli/geoip-update.py -k YOUR_API_KEY \
 
 ```bash
 # Build the binary
-cd scripts/cli/go
+cd cli/go
 go build -o geoip-updater
 
 # Run with API key
@@ -231,7 +231,7 @@ docker run --rm \
 ```bash
 # Clone repository
 git clone https://github.com/ytzcom/geoip.git
-cd geoip-updater/scripts/cli/docker
+cd geoip-updater/docker-images/cli
 
 # Configure environment
 cp .env.example .env
@@ -254,7 +254,7 @@ docker-compose run --rm geoip-updater ls -la /data
 
 ```bash
 # Development setup with local storage
-cd infrastructure/docker-api
+cd api-server
 docker-compose -f docker-compose.yml up -d
 
 # Production with S3 backend and Nginx
@@ -271,7 +271,7 @@ docker-compose logs -f
 
 ```bash
 # Install service
-cd scripts/cli/systemd
+cd cli/systemd
 sudo ./install.sh
 
 # Configure
@@ -295,10 +295,10 @@ kubectl create secret generic geoip-api-credentials \
   --from-literal=api-endpoint=https://geoipdb.net/auth
 
 # Deploy CronJob
-kubectl apply -k scripts/cli/k8s/
+kubectl apply -k cli/k8s/
 
 # Or for specific environment
-kubectl apply -k scripts/cli/k8s/overlays/prod
+kubectl apply -k cli/k8s/overlays/prod
 
 # Check status
 kubectl get cronjobs -n geoip-updater
@@ -692,7 +692,7 @@ timeout: 300
 
 Then use:
 ```bash
-python scripts/cli/geoip-update.py --config config.yaml
+python cli/geoip-update.py --config config.yaml
 ```
 
 ### API Authentication
@@ -722,10 +722,10 @@ curl -X POST https://geoipdb.net/auth \
 ## 🚀 Deployment Options
 
 ### AWS Lambda (Serverless)
-See [infrastructure/terraform](infrastructure/terraform) for AWS Lambda deployment using Terraform.
+See [deploy/terraform](deploy/terraform) for AWS Lambda deployment using Terraform.
 
 ### Docker API Server
-See [infrastructure/docker-api](infrastructure/docker-api) for containerized API deployment.
+See [api-server](api-server) for containerized API deployment.
 
 ### GitHub Actions CI/CD
 - Automated weekly database updates
@@ -757,10 +757,10 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 ## 🔗 Resources
 
 ### Documentation
-- [CLI Scripts Documentation](scripts/cli/README.md)
-- [Docker API Documentation](infrastructure/docker-api/README.md)
-- [Kubernetes Deployment](scripts/cli/k8s/README.md)
-- [Systemd Service Setup](scripts/cli/systemd/README.md)
+- [CLI Scripts Documentation](cli/README.md)
+- [Docker API Documentation](api-server/README.md)
+- [Kubernetes Deployment](cli/k8s/README.md)
+- [Systemd Service Setup](cli/systemd/README.md)
 
 ### External Links
 - [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases)
