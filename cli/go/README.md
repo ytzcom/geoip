@@ -30,26 +30,70 @@ docker run --rm \
 ```
 
 ### Native Binary
+
+#### Download Pre-built Binary (Recommended)
 ```bash
-# Download for your platform
-curl -L https://github.com/ytzcom/geoip-updater/releases/latest/download/geoip-updater-linux-amd64 -o geoip-updater
-chmod +x geoip-updater
+# Download for your platform (Linux amd64 example)
+curl -LO https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-linux-amd64
+chmod +x geoip-updater-linux-amd64
 
 # Run
-./geoip-updater --api-key your-key
+./geoip-updater-linux-amd64 --api-key your-key
 ```
 
-### Available Binaries
+#### Available Pre-built Binaries
 
-| Platform | Architecture | Download |
-|----------|-------------|----------|
-| Linux | amd64 | `geoip-updater-linux-amd64` |
-| Linux | arm64 | `geoip-updater-linux-arm64` |
-| macOS | amd64 | `geoip-updater-darwin-amd64` |
-| macOS | arm64 | `geoip-updater-darwin-arm64` |
-| Windows | amd64 | `geoip-updater-windows-amd64.exe` |
-| Windows | arm64 | `geoip-updater-windows-arm64.exe` |
-| FreeBSD | amd64 | `geoip-updater-freebsd-amd64` |
+Pre-compiled binaries are available from the [GitHub Releases page](https://github.com/ytzcom/geoip/releases/latest):
+
+| Platform | Architecture | Binary Name | Direct Download |
+|----------|-------------|-------------|-----------------|
+| **Linux** | amd64 (x86_64) | `geoip-updater-linux-amd64` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-linux-amd64) |
+| **Linux** | arm64 | `geoip-updater-linux-arm64` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-linux-arm64) |
+| **Linux** | arm/v7 | `geoip-updater-linux-arm` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-linux-arm) |
+| **macOS** | amd64 (Intel) | `geoip-updater-darwin-amd64` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-darwin-amd64) |
+| **macOS** | arm64 (M1/M2/M3) | `geoip-updater-darwin-arm64` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-darwin-arm64) |
+| **Windows** | amd64 | `geoip-updater-windows-amd64.exe` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-windows-amd64.exe) |
+| **Windows** | arm64 | `geoip-updater-windows-arm64.exe` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-windows-arm64.exe) |
+| **FreeBSD** | amd64 | `geoip-updater-freebsd-amd64` | [Download](https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-freebsd-amd64) |
+
+#### Quick Download Examples
+
+```bash
+# macOS Apple Silicon (M1/M2/M3)
+curl -LO https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-darwin-arm64
+chmod +x geoip-updater-darwin-arm64
+./geoip-updater-darwin-arm64 --version
+
+# macOS Intel
+curl -LO https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-darwin-amd64
+chmod +x geoip-updater-darwin-amd64
+./geoip-updater-darwin-amd64 --version
+
+# Linux ARM64 (Raspberry Pi 64-bit, AWS Graviton)
+curl -LO https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-linux-arm64
+chmod +x geoip-updater-linux-arm64
+./geoip-updater-linux-arm64 --version
+
+# Windows PowerShell
+Invoke-WebRequest -Uri "https://github.com/ytzcom/geoip/releases/latest/download/geoip-updater-windows-amd64.exe" -OutFile "geoip-updater.exe"
+.\geoip-updater.exe --version
+```
+
+#### Verify Download
+
+Each release includes checksums for verification:
+
+```bash
+# Download checksums
+curl -LO https://github.com/ytzcom/geoip/releases/latest/download/checksums-sha256.txt
+
+# Verify your download (Linux/macOS)
+sha256sum -c checksums-sha256.txt 2>/dev/null | grep "geoip-updater-linux-amd64"
+
+# Or manually compare
+sha256sum geoip-updater-linux-amd64
+cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
+```
 
 ## 🔧 Configuration
 
@@ -434,34 +478,112 @@ VSZ: ~45MB
 - **[Docker Cron](../python-cron/README.md)** - Automated scheduling
 - **[Usage Examples](../../docs/USAGE_EXAMPLES.md)** - Integration examples
 
-## 🤝 Contributing
+## 🔨 Building from Source
 
-To modify this Go implementation:
+If pre-built binaries are not available for your platform or you want to customize the build:
 
-1. **Setup Go environment**:
+### Prerequisites
+- Go 1.21 or later
+- Git
+
+### Build Instructions
+
+1. **Clone the repository**:
    ```bash
-   go version  # Go 1.21+ required
-   git clone https://github.com/ytzcom/geoip-updater.git
-   cd geoip-updater/cli/go
+   git clone https://github.com/ytzcom/geoip.git
+   cd geoip/cli/go
    ```
 
-2. **Build and test**:
+2. **Build for current platform**:
    ```bash
    go build -o geoip-updater .
    ./geoip-updater --version
-   ./geoip-updater --dry-run --verbose
    ```
 
 3. **Cross-compile for other platforms**:
    ```bash
+   # Linux AMD64
+   GOOS=linux GOARCH=amd64 go build -o geoip-updater-linux-amd64 .
+   
    # Linux ARM64
    GOOS=linux GOARCH=arm64 go build -o geoip-updater-linux-arm64 .
    
-   # Windows
+   # Linux ARM v7
+   GOOS=linux GOARCH=arm GOARM=7 go build -o geoip-updater-linux-arm .
+   
+   # macOS Intel
+   GOOS=darwin GOARCH=amd64 go build -o geoip-updater-darwin-amd64 .
+   
+   # macOS Apple Silicon
+   GOOS=darwin GOARCH=arm64 go build -o geoip-updater-darwin-arm64 .
+   
+   # Windows AMD64
    GOOS=windows GOARCH=amd64 go build -o geoip-updater-windows-amd64.exe .
    
-   # macOS ARM64
-   GOOS=darwin GOARCH=arm64 go build -o geoip-updater-darwin-arm64 .
+   # Windows ARM64
+   GOOS=windows GOARCH=arm64 go build -o geoip-updater-windows-arm64.exe .
+   
+   # FreeBSD AMD64
+   GOOS=freebsd GOARCH=amd64 go build -o geoip-updater-freebsd-amd64 .
    ```
 
-4. **Submit pull request**: Include tests and documentation updates
+4. **Build with optimizations**:
+   ```bash
+   # Smaller binary size
+   go build -ldflags="-s -w" -o geoip-updater .
+   
+   # With version information
+   VERSION=$(git describe --tags --always --dirty)
+   go build -ldflags="-s -w -X main.version=$VERSION" -o geoip-updater .
+   
+   # Maximum optimization
+   go build -ldflags="-s -w" -trimpath -o geoip-updater .
+   ```
+
+5. **Using the Makefile**:
+   ```bash
+   # Build for current platform
+   make build
+   
+   # Build for all platforms
+   make build-all
+   
+   # Create release archives
+   make release
+   
+   # Install locally
+   make install
+   
+   # See all options
+   make help
+   ```
+
+## 🤝 Contributing
+
+To modify this Go implementation:
+
+1. **Setup development environment**:
+   ```bash
+   go version  # Ensure Go 1.21+ is installed
+   git clone https://github.com/ytzcom/geoip.git
+   cd geoip/cli/go
+   ```
+
+2. **Make your changes and test**:
+   ```bash
+   # Run tests
+   go test ./...
+   
+   # Build and test locally
+   go build -o geoip-updater .
+   ./geoip-updater --dry-run --verbose
+   
+   # Test with real download (requires API key)
+   ./geoip-updater --api-key YOUR_KEY --databases city --verbose
+   ```
+
+3. **Submit pull request**: 
+   - Include tests for new features
+   - Update documentation
+   - Follow Go best practices and conventions
+   - Ensure all tests pass
