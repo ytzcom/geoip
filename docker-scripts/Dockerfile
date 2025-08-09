@@ -7,10 +7,10 @@ FROM golang:1.21-alpine AS go-builder
 WORKDIR /build
 
 # Copy Go source code
-COPY scripts/cli/go/go.mod scripts/cli/go/go.sum* ./
+COPY cli/go/go.mod cli/go/go.sum* ./
 RUN go mod download || true
 
-COPY scripts/cli/go/main.go .
+COPY cli/go/main.go .
 
 # Build for AMD64
 RUN GOOS=linux GOARCH=amd64 go build \
@@ -32,18 +32,18 @@ FROM alpine:3.19 as builder
 WORKDIR /opt/geoip
 
 # Copy existing CLI scripts (DRY - reuse these!)
-COPY scripts/cli/geoip-update.sh .
-COPY scripts/cli/geoip-update-posix.sh .
-COPY scripts/cli/geoip-update.py .
-COPY scripts/cli/geoip-update.ps1 .
-COPY scripts/cli/requirements.txt .
+COPY cli/geoip-update.sh .
+COPY cli/geoip-update-posix.sh .
+COPY cli/geoip-update.py .
+COPY cli/geoip-update.ps1 .
+COPY cli/requirements.txt .
 
 # Add new helper scripts that WRAP the existing ones
-COPY docker/scripts/entrypoint-helper.sh .
-COPY docker/scripts/setup-cron.sh .
-COPY docker/scripts/validate.sh .
-COPY docker/scripts/crontab.example .
-COPY docker/scripts/README.md .
+COPY docker-scripts/entrypoint-helper.sh .
+COPY docker-scripts/setup-cron.sh .
+COPY docker-scripts/validate.sh .
+COPY docker-scripts/crontab.example .
+COPY docker-scripts/README.md .
 
 # Make scripts executable
 RUN chmod +x *.sh
