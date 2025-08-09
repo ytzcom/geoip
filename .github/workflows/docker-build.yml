@@ -50,7 +50,7 @@ jobs:
         id: version
         run: |
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/}
+            VERSION=${GITHUB_REF#refs/tags/v}  # Strip 'refs/tags/v' prefix → 1.0.0
           elif [[ $GITHUB_REF == refs/heads/main ]]; then
             VERSION=latest
           else
@@ -203,13 +203,19 @@ jobs:
             VCS_REF=${{ github.sha }}
           no-cache: ${{ github.event.inputs.force_rebuild == 'true' }}
 
-      - name: Generate SBOM
+      - name: Generate SBOM (with retry)
         if: github.event_name != 'pull_request'
-        uses: anchore/sbom-action@v0
+        uses: nick-fields/retry@v3
         with:
-          image: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:${{ needs.setup.outputs.version }}
-          format: spdx-json
-          output-file: ${{ matrix.name }}-sbom.spdx.json
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: |
+            # Use anchore/sbom-action via Docker to generate SBOM
+            docker run --rm -v "$PWD":/workspace \
+              anchore/syft:latest \
+              ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:${{ needs.setup.outputs.version }} \
+              -o spdx-json=/workspace/${{ matrix.name }}-sbom.spdx.json
 
       - name: Upload SBOM
         if: github.event_name != 'pull_request'
