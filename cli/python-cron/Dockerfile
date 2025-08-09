@@ -45,7 +45,7 @@ WORKDIR /app
 COPY geoip-update.py .
 
 # Copy secure entrypoint script
-COPY docker/entrypoint-cron-secure.sh /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Create directories with proper ownership

@@ -12,13 +12,13 @@ RUN adduser -D -g '' -u 1000 geoip
 WORKDIR /build
 
 # Copy go mod files
-COPY go/go.mod go/go.sum* ./
+COPY go.mod go.sum* ./
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY go/ ./
+COPY . ./
 
 # Build the binary with all optimizations
 # CGO_ENABLED=0 for static binary

@@ -231,7 +231,7 @@ docker run --rm \
 ```bash
 # Clone repository
 git clone https://github.com/ytzcom/geoip.git
-cd geoip-updater/docker-images/cli
+cd geoip-updater/cli/python
 
 # Configure environment
 cp .env.example .env
@@ -295,10 +295,10 @@ kubectl create secret generic geoip-api-credentials \
   --from-literal=api-endpoint=https://geoipdb.net/auth
 
 # Deploy CronJob
-kubectl apply -k cli/k8s/
+kubectl apply -k k8s/
 
 # Or for specific environment
-kubectl apply -k cli/k8s/overlays/prod
+kubectl apply -k k8s/overlays/prod
 
 # Check status
 kubectl get cronjobs -n geoip-updater
@@ -759,7 +759,7 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 ### Documentation
 - [CLI Scripts Documentation](cli/README.md)
 - [Docker API Documentation](api-server/README.md)
-- [Kubernetes Deployment](cli/k8s/README.md)
+- [Kubernetes Deployment](k8s/README.md)
 - [Systemd Service Setup](cli/systemd/README.md)
 
 ### External Links
