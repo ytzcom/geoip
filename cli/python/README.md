@@ -1,430 +1,419 @@
-# GeoIP Database CLI Update Scripts
+# Python CLI
 
-Cross-platform command-line scripts for downloading GeoIP databases from the authenticated API.
+Full-featured Python client for GeoIP database updates with async downloads, configuration files, and advanced features.
 
-## Docker Images
+## ✨ Key Features
 
-Pre-built Docker images are available on Docker Hub. See [DOCKER_HUB.md](DOCKER_HUB.md) for detailed usage instructions.
+- 🚀 **Async Downloads**: Concurrent downloads for maximum speed
+- 📁 **Config Files**: YAML configuration support for complex setups
+- 🔄 **Smart Retry**: Exponential backoff with jitter
+- 📊 **Progress Bars**: Real-time download progress
+- 🔐 **Secure**: Input validation and safe file handling
+- 🐳 **Docker Ready**: Multi-platform container support
 
+## 🚀 Quick Start
+
+### Docker Run
 ```bash
-# Quick start with Docker
+# Simple download
 docker run --rm \
-  -e GEOIP_API_KEY=your-api-key \
-  -e GEOIP_API_ENDPOINT=https://geoipdb.net/auth \
+  -e GEOIP_API_KEY=your-key \
+  -v $(pwd)/data:/data \
+  ytzcom/geoip-updater:latest
+
+# With specific databases
+docker run --rm \
+  -e GEOIP_API_KEY=your-key \
+  -e GEOIP_DATABASES="city,country" \
   -v $(pwd)/data:/data \
   ytzcom/geoip-updater:latest
 ```
 
-## Available Scripts
+### Native Installation
+```bash
+# Install dependencies
+pip install aiohttp pyyaml tqdm
 
-### Bash Script (`geoip-update.sh`)
-- **Platform**: Linux, macOS, BSD
-- **Requirements**: bash, curl, jq
-- **Scheduler**: cron, systemd timers
-- **Features**: Database discovery, smart selection, aliases support
+# Download script
+curl -O https://raw.githubusercontent.com/ytzcom/geoip-updater/main/cli/python/geoip-update.py
+chmod +x geoip-update.py
 
-### PowerShell Script (`geoip-update.ps1`)
-- **Platform**: Windows
-- **Requirements**: PowerShell 5.1+
-- **Scheduler**: Windows Task Scheduler
-- **Features**: Windows Credential Manager integration, progress bars, database discovery
+# Run
+./geoip-update.py --api-key your-key
+```
 
-### Python Script (`geoip-update.py`)
-- **Platform**: Cross-platform (Windows, Linux, macOS)
-- **Requirements**: Python 3.7+, pip packages (see requirements.txt)
-- **Scheduler**: Any (cron, Task Scheduler, systemd)
-- **Features**: Async downloads, YAML config support, database discovery
+## 🔧 Configuration
 
-### Go Binary (`geoip-updater`)
-- **Platform**: Cross-platform (compilable for any OS/architecture)
-- **Requirements**: None (self-contained binary)
-- **Scheduler**: Any (cron, Task Scheduler, systemd)
-- **Features**: High performance, database discovery, smart selection
+### Environment Variables
 
-## Database Aliases and Smart Selection
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEOIP_API_KEY` | *(required)* | Your authentication API key |
+| `GEOIP_API_ENDPOINT` | `https://geoipdb.net/auth` | API endpoint URL |
+| `GEOIP_TARGET_DIR` | `/data` | Database storage directory |
+| `GEOIP_DATABASES` | `all` | Databases to download |
+| `GEOIP_CONFIG_FILE` | - | Path to configuration file |
+| `GEOIP_LOG_FILE` | - | Log file path |
 
-All scripts support intelligent database selection with these features:
+### Configuration File
+
+Create `config.yaml` for advanced setups:
+
+```yaml
+# Authentication
+api_key: "your-api-key-here"
+api_endpoint: "https://geoipdb.net/auth"
+
+# Storage
+target_dir: "/var/lib/geoip"
+temp_dir: "/tmp/geoip"
+
+# Database selection
+databases:
+  - "GeoIP2-City.mmdb"
+  - "GeoIP2-Country.mmdb"
+  - "GeoIP2-ISP.mmdb"
+
+# Performance
+max_concurrent: 6
+chunk_size: 8192
+timeout: 300
+
+# Retry logic
+max_retries: 3
+retry_delay: 2.0
+retry_multiplier: 2.0
+
+# Logging
+log_file: "/var/log/geoip-update.log"
+log_level: "INFO"
+quiet_mode: false
+verbose: false
+
+# Security
+verify_ssl: true
+user_agent: "GeoIP-Updater/1.0"
+
+# File handling
+create_dirs: true
+preserve_timestamps: true
+atomic_updates: true
+```
+
+Use configuration file:
+```bash
+./geoip-update.py --config config.yaml
+```
+
+## 💻 Command Line Options
+
+### Basic Options
+```bash
+# Required
+-k, --api-key KEY          API authentication key
+-e, --endpoint URL         API endpoint URL
+-d, --directory DIR        Target directory for databases
+
+# Database Selection
+-b, --databases LIST       Specific databases (comma-separated) or "all"
+
+# Configuration
+-c, --config FILE          YAML configuration file path
+```
+
+### Advanced Options
+```bash
+# Performance
+--concurrent NUM           Max concurrent downloads (default: 4)
+--timeout SECONDS          Download timeout per file (default: 300)
+--chunk-size BYTES         Download chunk size (default: 8192)
+
+# Retry Logic
+--max-retries NUM          Maximum retry attempts (default: 3)
+--retry-delay SECONDS      Initial retry delay (default: 2.0)
+--retry-multiplier FLOAT   Retry delay multiplier (default: 2.0)
+
+# Logging & Output
+-l, --log-file FILE        Log file path
+-q, --quiet               Suppress progress output
+-v, --verbose             Detailed output and debugging
+--log-level LEVEL         Log level (DEBUG, INFO, WARNING, ERROR)
+
+# Behavior
+--no-lock                 Skip lock file (allows concurrent runs)
+--test-connection         Test API connectivity and exit
+--dry-run                 Show what would be downloaded without action
+--force-update            Download files even if up-to-date
+```
+
+## 📋 Database Selection
+
+### Selection Methods
+
+```bash
+# All databases
+./geoip-update.py --databases all
+
+# Specific databases by filename
+./geoip-update.py --databases "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
+
+# Using aliases (case-insensitive)
+./geoip-update.py --databases "city,country,isp"
+
+# Provider-specific
+./geoip-update.py --databases "maxmind/*"
+./geoip-update.py --databases "ip2location/*"
+```
+
+### Smart Database Discovery
+
+The tool supports intelligent database name resolution:
+
+```bash
+# These all resolve to the same database
+--databases "city"
+--databases "City"  
+--databases "GeoIP2-City"
+--databases "GeoIP2-City.mmdb"
+
+# Partial matching
+--databases "proxy"  # Matches IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN
+
+# Multiple aliases
+--databases "city,isp,proxy"
+```
 
 ### Available Aliases
 
-**MaxMind Databases:**
-- `city` → GeoIP2-City.mmdb
-- `country` → GeoIP2-Country.mmdb
-- `isp` → GeoIP2-ISP.mmdb
-- `connection` → GeoIP2-Connection-Type.mmdb
+| Alias | Full Database Name | Provider |
+|-------|-------------------|----------|
+| `city` | `GeoIP2-City.mmdb` | MaxMind |
+| `country` | `GeoIP2-Country.mmdb` | MaxMind |
+| `isp` | `GeoIP2-ISP.mmdb` | MaxMind |
+| `connection` | `GeoIP2-Connection-Type.mmdb` | MaxMind |
+| `db23-ipv4` | `IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN` | IP2Location |
+| `db23-ipv6` | `IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN` | IP2Location |
+| `px2` | `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN` | IP2Location |
 
-**IP2Location Databases:**
-- `db23` → IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN
-- `db23v6` → IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN
-- `px2` → IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN
+## 🚀 Performance Optimization
 
-### Bulk Selection Options
-- `all` - Download all available databases
-- `maxmind/all` - Download all MaxMind databases
-- `ip2location/all` - Download all IP2Location databases
-
-### Smart Features
-- **Case-insensitive**: Use `CITY`, `City`, or `city`
-- **Extension optional**: Both `city` and `city.mmdb` work
-- **Mix and match**: Combine aliases with full names
-- **Validation**: Test database names before downloading
-
-## Initial Setup
-
-### 1. Deploy Infrastructure
-
-First, deploy the AWS infrastructure:
+### Concurrent Downloads
 
 ```bash
-cd infrastructure/terraform
-terraform init
-terraform apply
+# Conservative (good for limited bandwidth)
+./geoip-update.py --concurrent 2
+
+# Balanced (default)
+./geoip-update.py --concurrent 4
+
+# Aggressive (fast networks only)
+./geoip-update.py --concurrent 8
 ```
 
-### 2. Configure Domain (Optional)
-
-The scripts are pre-configured to use `https://geoipdb.net/auth` as the default endpoint. If you want to use your own domain:
+### Timeout Configuration
 
 ```bash
-# Update all scripts with your custom endpoint
-cd scripts/cli
-chmod +x update-api-endpoint.sh
-./update-api-endpoint.sh "https://your-custom-domain.com/auth"
-```
+# Quick timeout for local networks
+./geoip-update.py --timeout 60
 
-### 3. Install Dependencies
+# Extended timeout for slow connections
+./geoip-update.py --timeout 600
 
-#### For Bash Script
-```bash
-# Ubuntu/Debian
-sudo apt-get install curl jq
-
-# CentOS/RHEL
-sudo yum install curl jq
-
-# macOS
-brew install curl jq
-```
-
-#### For Python Script
-```bash
-pip install -r requirements.txt
-# or
-pip install aiohttp pyyaml click
-```
-
-## Database Discovery and Smart Selection
-
-All CLI scripts now support intelligent database discovery and selection:
-
-### List Available Databases
-
-```bash
-# Bash
-./geoip-update.sh --list-databases
-
-# PowerShell
-.\geoip-update.ps1 -ListDatabases
-
-# Python
-python geoip-update.py --list-databases
-
-# Go
-./geoip-updater --list-databases
-```
-
-### Show Usage Examples
-
-```bash
-# Bash
-./geoip-update.sh --show-examples
-
-# PowerShell
-.\geoip-update.ps1 -ShowExamples
-
-# Python
-python geoip-update.py --show-examples
-
-# Go
-./geoip-updater --show-examples
-```
-
-### Validate Database Names
-
-```bash
-# Bash
-./geoip-update.sh -k YOUR_API_KEY --validate-only -b "city,isp"
-
-# PowerShell
-.\geoip-update.ps1 -ApiKey YOUR_API_KEY -ValidateOnly -Databases @("city", "isp")
-
-# Python
-python geoip-update.py --api-key YOUR_API_KEY --validate-only --databases city --databases isp
-
-# Go
-./geoip-updater --api-key YOUR_API_KEY --validate-only --databases "city,isp"
-```
-
-## Usage Examples
-
-### Basic Usage
-
-```bash
-# Bash
-./geoip-update.sh -k YOUR_API_KEY
-
-# PowerShell
-.\geoip-update.ps1 -ApiKey YOUR_API_KEY
-
-# Python
-python geoip-update.py --api-key YOUR_API_KEY
-
-# Go
-./geoip-updater --api-key YOUR_API_KEY
-```
-
-### Using Environment Variables
-
-```bash
-export GEOIP_API_KEY="your_api_key_here"
-export GEOIP_TARGET_DIR="/var/lib/geoip"
-
-# All scripts will use these environment variables
-./geoip-update.sh
-```
-
-### Download Specific Databases
-
-```bash
-# Using full database names
-./geoip-update.sh -k YOUR_API_KEY -b "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
-
-# Using aliases (case-insensitive)
-./geoip-update.sh -k YOUR_API_KEY -b "city,country"
-
-# Bulk selection - all MaxMind databases
-./geoip-update.sh -k YOUR_API_KEY -b "maxmind/all"
-
-# Bulk selection - all IP2Location databases
-python geoip-update.py --api-key YOUR_API_KEY --databases ip2location/all
-
-# Mixed aliases and full names
-.\geoip-update.ps1 -ApiKey YOUR_API_KEY -Databases @("city", "ISP", "px2")
-```
-
-### Quiet Mode for Schedulers
-
-```bash
-# Bash (for cron)
-./geoip-update.sh -q -l /var/log/geoip-update.log
-
-# PowerShell (for Task Scheduler)
-.\geoip-update.ps1 -Quiet -LogFile C:\Logs\geoip-update.log
-
-# Python
-python geoip-update.py --quiet --log-file /var/log/geoip-update.log
-```
-
-## Scheduler Configuration
-
-### Cron (Linux/macOS)
-
-Add to crontab (`crontab -e`):
-
-```cron
-# Update GeoIP databases daily at 2 AM
-0 2 * * * /path/to/geoip-update.sh -q -l /var/log/geoip-update.log
-```
-
-### Windows Task Scheduler
-
-Create a scheduled task:
-
-```powershell
-$action = New-ScheduledTaskAction -Execute "PowerShell.exe" `
-    -Argument "-ExecutionPolicy Bypass -File C:\Scripts\geoip-update.ps1 -Quiet -LogFile C:\Logs\geoip-update.log"
-
-$trigger = New-ScheduledTaskTrigger -Daily -At 2am
-
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
-
-Register-ScheduledTask -TaskName "GeoIP Database Update" `
-    -Action $action -Trigger $trigger -Principal $principal
-```
-
-### Systemd Timer (Modern Linux)
-
-See the `systemd/` directory for timer unit files.
-
-## Configuration Files
-
-### Python YAML Configuration
-
-Create `config.yaml`:
-
-```yaml
-api_key: "your_api_key_here"
-api_endpoint: "https://xxx.execute-api.region.amazonaws.com/v1/auth"
-target_dir: "/var/lib/geoip"
-databases:
-  - "all"
-max_retries: 3
+# Configuration file approach
 timeout: 300
-max_concurrent: 4
-log_file: "/var/log/geoip-update.log"
+chunk_size: 16384  # Larger chunks for faster networks
 ```
 
-Use with:
-```bash
-python geoip-update.py --config config.yaml
-```
-
-## Security Considerations
-
-### API Key Storage
-
-1. **Environment Variables** (Recommended for servers)
-   ```bash
-   # Add to /etc/environment or ~/.bashrc
-   export GEOIP_API_KEY="your_secure_key_here"
-   ```
-
-2. **Windows Credential Manager** (PowerShell only)
-   ```powershell
-   # Store API key (will be prompted for key)
-   .\geoip-update.ps1 -ApiKey YOUR_KEY
-   # Future runs will use stored key automatically
-   ```
-
-3. **Configuration Files** (Ensure proper permissions)
-   ```bash
-   chmod 600 config.yaml
-   chown root:root config.yaml
-   ```
-
-### File Permissions
+### Progress Monitoring
 
 ```bash
-# Restrict script permissions
-chmod 755 geoip-update.sh
-chmod 600 /etc/geoip-api-key.conf  # If storing key in file
+# Standard progress bars
+./geoip-update.py
 
-# Restrict download directory
-chmod 755 /var/lib/geoip
-chown geoip:geoip /var/lib/geoip  # Use dedicated user
+# Quiet mode for automation
+./geoip-update.py --quiet
+
+# Verbose debugging
+./geoip-update.py --verbose
 ```
 
-## Monitoring and Logging
+## 🔄 Automation & Scheduling
 
-### Log Locations
-
-- **Linux**: `/var/log/geoip-update.log`
-- **Windows**: `C:\Logs\geoip-update.log`
-- **macOS**: `~/Library/Logs/geoip-update.log`
-
-### Log Rotation
-
-For Linux systems, create `/etc/logrotate.d/geoip-update`:
-
-```
-/var/log/geoip-update.log {
-    daily
-    rotate 7
-    compress
-    missingok
-    notifempty
-    create 0644 geoip geoip
-}
-```
-
-### Monitoring
-
-Check script execution:
-
+### Cron Example
 ```bash
-# Check last run
-tail -n 50 /var/log/geoip-update.log
+# Daily updates at 3 AM
+0 3 * * * /usr/local/bin/geoip-update.py --config /etc/geoip/config.yaml --quiet
 
-# Monitor in real-time
-tail -f /var/log/geoip-update.log
-
-# Check for errors
-grep ERROR /var/log/geoip-update.log
+# Weekly with logging
+0 2 * * 0 /usr/local/bin/geoip-update.py --quiet --log-file /var/log/geoip-update.log
 ```
 
-## Troubleshooting
+### systemd Service
+```ini
+[Unit]
+Description=GeoIP Database Update
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/geoip-update.py --config /etc/geoip/config.yaml
+User=geoip
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Docker Compose for Automation
+```yaml
+version: '3.8'
+services:
+  geoip-updater:
+    image: ytzcom/geoip-updater:latest
+    environment:
+      GEOIP_API_KEY: ${GEOIP_API_KEY}
+      GEOIP_DATABASES: "city,country,isp"
+    volumes:
+      - geoip-data:/data
+      - ./config.yaml:/config.yaml:ro
+    command: ["python", "geoip-update.py", "--config", "/config.yaml"]
+    
+volumes:
+  geoip-data:
+```
+
+## 🛡️ Security Features
+
+### Input Validation
+- API key format validation
+- Path traversal protection  
+- File extension validation
+- Size limit enforcement
+
+### Safe File Handling
+- Atomic file updates (temp → final)
+- Checksum verification (when available)
+- Permission preservation
+- Backup creation option
+
+### SSL/TLS Security
+```yaml
+# Configuration options
+verify_ssl: true          # Verify SSL certificates
+user_agent: "Custom/1.0"  # Custom user agent
+```
+
+## 🏠️ Technical Details
+
+### Architecture
+- **Async I/O**: `aiohttp` for concurrent downloads
+- **Progress Tracking**: `tqdm` for user feedback
+- **Configuration**: `PyYAML` for complex setups
+- **Error Handling**: Comprehensive exception management
+
+### Dependencies
+```bash
+# Core requirements
+aiohttp>=3.8.0      # Async HTTP client
+pyyaml>=6.0         # YAML configuration
+tqdm>=4.64.0        # Progress bars
+
+# Optional enhancements
+aiofiles>=0.8.0     # Async file I/O
+ujson>=5.0.0        # Faster JSON parsing
+```
+
+### Error Handling
+- **Network errors**: Automatic retry with exponential backoff
+- **API errors**: Detailed error messages with troubleshooting tips
+- **File errors**: Fallback strategies and recovery options
+- **Configuration errors**: Clear validation messages
+
+## 🔍 Troubleshooting
 
 ### Common Issues
 
-1. **"jq is required but not found"**
-   - Install jq: See installation instructions above
+**ModuleNotFoundError**
+```bash
+# Install missing dependencies
+pip install aiohttp pyyaml tqdm
 
-2. **"API key not provided"**
-   - Set GEOIP_API_KEY environment variable or use -k flag
+# Or install all requirements
+pip install -r requirements.txt
+```
 
-3. **"Another instance is already running"**
-   - Check for stale lock file: `rm /tmp/geoip-update.lock`
+**Permission Denied**
+```bash
+# Fix directory permissions
+sudo chown -R $USER:$USER /var/lib/geoip
+chmod 755 /var/lib/geoip
 
-4. **HTTP 401 Unauthorized**
-   - Verify API key is correct
-   - Check API key has necessary permissions in DynamoDB
+# Or use user directory
+./geoip-update.py --directory ~/geoip
+```
 
-5. **HTTP 429 Rate Limited**
-   - Script will automatically retry with backoff
-   - Reduce frequency of updates if persistent
+**API Connection Issues**
+```bash
+# Test connectivity
+./geoip-update.py --test-connection
 
-6. **SSL Certificate Errors**
-   - Update system CA certificates
-   - Python: Use `--no-ssl-verify` (not recommended for production)
+# Debug with verbose output
+./geoip-update.py --verbose
+
+# Check SSL issues
+./geoip-update.py --verbose --log-level DEBUG
+```
+
+**Concurrent Download Issues**
+```bash
+# Reduce concurrency
+./geoip-update.py --concurrent 1
+
+# Increase timeout
+./geoip-update.py --timeout 600
+
+# Check system limits
+ulimit -n  # File descriptor limit
+```
 
 ### Debug Mode
 
-Run scripts in verbose mode for detailed output:
-
+Enable comprehensive debugging:
 ```bash
-# Bash
-./geoip-update.sh -v
+# Maximum debugging
+./geoip-update.py --verbose --log-level DEBUG
 
-# PowerShell
-.\geoip-update.ps1 -Verbose
+# Log to file for analysis
+./geoip-update.py --verbose --log-file debug.log --log-level DEBUG
 
-# Python
-python geoip-update.py --verbose
+# Test mode (no actual downloads)
+./geoip-update.py --dry-run --verbose
 ```
 
-## Advanced Usage
+## 🔗 Related Documentation
 
-### Parallel Downloads
+- **[CLI Overview](../README.md)** - All CLI implementations comparison
+- **[Docker Cron](../python-cron/README.md)** - Automated scheduling version  
+- **[Kubernetes](../python-k8s/README.md)** - Production deployment version
+- **[Usage Examples](../../docs/USAGE_EXAMPLES.md)** - Programming language integration
+- **[Security Guide](../../docs/SECURITY.md)** - Security best practices
 
-Control concurrent downloads:
+## 🤝 Contributing
 
-```bash
-# Python (default: 4)
-python geoip-update.py --concurrent 8
-```
+To modify this Python implementation:
 
-### Custom Timeouts
+1. **Setup environment**:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-```bash
-# Bash (seconds)
-./geoip-update.sh -t 600
+2. **Test changes**:
+   ```bash
+   python geoip-update.py --test-connection
+   python geoip-update.py --dry-run --verbose
+   ```
 
-# PowerShell (seconds)
-.\geoip-update.ps1 -Timeout 600
-
-# Python (seconds)
-python geoip-update.py --timeout 600
-```
-
-### No Lock File
-
-For testing or special cases:
-
-```bash
-# All scripts support --no-lock
-./geoip-update.sh --no-lock
-```
-
-## License
-
-See the main project LICENSE file.
+3. **Submit pull request**: Include tests and documentation updates
