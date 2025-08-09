@@ -1,0 +1,317 @@
+name: Release Go Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'go-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-binaries:
+    name: Build Go Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - os: linux
+            arch: amd64
+            output: geoip-updater-linux-amd64
+          - os: linux
+            arch: arm64
+            output: geoip-updater-linux-arm64
+          - os: linux
+            arch: arm
+            arm: 7
+            output: geoip-updater-linux-arm
+          # macOS builds
+          - os: darwin
+            arch: amd64
+            output: geoip-updater-darwin-amd64
+          - os: darwin
+            arch: arm64
+            output: geoip-updater-darwin-arm64
+          # Windows builds
+          - os: windows
+            arch: amd64
+            output: geoip-updater-windows-amd64.exe
+          - os: windows
+            arch: arm64
+            output: geoip-updater-windows-arm64.exe
+          # FreeBSD build
+          - os: freebsd
+            arch: amd64
+            output: geoip-updater-freebsd-amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          # Remove 'go-' prefix if present
+          VERSION="${VERSION#go-}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.arm }}
+        run: |
+          cd cli/go
+          
+          # Set build flags
+          BUILD_FLAGS="-ldflags=\"-s -w -X main.version=${{ steps.version.outputs.version }}\" -trimpath"
+          
+          # Build the binary
+          echo "Building for ${{ matrix.os }}/${{ matrix.arch }}..."
+          if [ -n "${{ matrix.arm }}" ]; then
+            echo "  ARM version: ${{ matrix.arm }}"
+          fi
+          
+          go build -o ../../${{ matrix.output }} $BUILD_FLAGS .
+          
+          # Make executable (except Windows)
+          if [ "${{ matrix.os }}" != "windows" ]; then
+            chmod +x ../../${{ matrix.output }}
+          fi
+          
+          # Show file info
+          ls -lh ../../${{ matrix.output }}
+
+      - name: Compress binary
+        run: |
+          # Use gzip for better compatibility
+          gzip -9 -k ${{ matrix.output }}
+          
+          # Also create tar.gz archive
+          tar -czf ${{ matrix.output }}.tar.gz ${{ matrix.output }}
+          
+          # Show compressed sizes
+          echo "Compressed files:"
+          ls -lh ${{ matrix.output }}*
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.output }}
+          path: |
+            ${{ matrix.output }}
+            ${{ matrix.output }}.gz
+            ${{ matrix.output }}.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          # Remove 'go-' prefix if present
+          VERSION="${VERSION#go-}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries/
+          pattern: binary-*
+
+      - name: Prepare release assets
+        run: |
+          # Move all binaries to release directory
+          mkdir -p release
+          for dir in binaries/binary-*; do
+            if [ -d "$dir" ]; then
+              mv $dir/* release/ 2>/dev/null || true
+            fi
+          done
+          
+          # List all release files
+          echo "Release assets:"
+          ls -lh release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          
+          # Generate SHA256 checksums
+          sha256sum geoip-updater-* > checksums-sha256.txt
+          
+          # Generate MD5 checksums (for compatibility)
+          md5sum geoip-updater-* > checksums-md5.txt
+          
+          # Show checksums
+          echo "SHA256 checksums:"
+          cat checksums-sha256.txt
+          echo ""
+          echo "MD5 checksums:"
+          cat checksums-md5.txt
+
+      - name: Create release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## GeoIP Updater Go Binary Release ${{ steps.version.outputs.version }}
+          
+          ### 📦 Downloads
+          
+          Download the appropriate binary for your platform:
+          
+          #### Linux
+          - `geoip-updater-linux-amd64` - Linux x86_64
+          - `geoip-updater-linux-arm64` - Linux ARM64
+          - `geoip-updater-linux-arm` - Linux ARM v7
+          
+          #### macOS
+          - `geoip-updater-darwin-amd64` - macOS Intel
+          - `geoip-updater-darwin-arm64` - macOS Apple Silicon (M1/M2)
+          
+          #### Windows
+          - `geoip-updater-windows-amd64.exe` - Windows x86_64
+          - `geoip-updater-windows-arm64.exe` - Windows ARM64
+          
+          #### Other
+          - `geoip-updater-freebsd-amd64` - FreeBSD x86_64
+          
+          ### 🔒 Verification
+          
+          Verify your download using the provided checksums:
+          - `checksums-sha256.txt` - SHA256 checksums
+          - `checksums-md5.txt` - MD5 checksums
+          
+          ```bash
+          # Verify SHA256
+          sha256sum -c checksums-sha256.txt
+          
+          # Verify MD5
+          md5sum -c checksums-md5.txt
+          ```
+          
+          ### 📊 File Formats
+          
+          Each binary is available in three formats:
+          - **Uncompressed**: Direct executable
+          - **Gzip** (`.gz`): Single file compression
+          - **Tar.gz** (`.tar.gz`): Archive format
+          
+          ### 🚀 Quick Start
+          
+          ```bash
+          # Download for your platform (example: Linux AMD64)
+          curl -LO https://github.com/ytzcom/geoip/releases/download/${{ steps.version.outputs.version }}/geoip-updater-linux-amd64
+          
+          # Make executable
+          chmod +x geoip-updater-linux-amd64
+          
+          # Run
+          ./geoip-updater-linux-amd64 --version
+          ```
+          
+          ### 📝 Changelog
+          
+          See [CHANGELOG.md](https://github.com/ytzcom/geoip/blob/main/CHANGELOG.md) for details.
+          
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Go Binary Release ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          files: |
+            release/geoip-updater-*
+            release/checksums-*.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-binaries:
+    name: Test Binaries
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: geoip-updater-linux-amd64
+          - os: macos-latest
+            binary: geoip-updater-darwin-amd64
+          - os: windows-latest
+            binary: geoip-updater-windows-amd64.exe
+    
+    steps:
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          # Remove 'go-' prefix if present
+          VERSION="${VERSION#go-}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download binary from release
+        shell: bash
+        run: |
+          # Wait a moment for release to be available
+          sleep 5
+          
+          # Download the binary
+          curl -LO "https://github.com/ytzcom/geoip/releases/download/${{ steps.version.outputs.version }}/${{ matrix.binary }}"
+          
+          # Make executable (except Windows)
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x ${{ matrix.binary }}
+          fi
+
+      - name: Test binary
+        shell: bash
+        run: |
+          # Test version command
+          ./${{ matrix.binary }} --version
+          
+          # Test help command
+          ./${{ matrix.binary }} --help
+          
+          # Test list databases (doesn't require API key)
+          ./${{ matrix.binary }} --list-databases || true
