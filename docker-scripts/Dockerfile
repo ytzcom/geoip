@@ -7,7 +7,7 @@ FROM golang:1.21-alpine AS go-builder
 WORKDIR /build
 
 # Copy Go source code
-COPY cli/go/go.mod cli/go/go.sum* ./
+COPY cli/go/go.mod cli/go/go.sum ./
 RUN go mod download || true
 
 COPY cli/go/main.go .
