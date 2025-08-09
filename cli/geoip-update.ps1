@@ -34,6 +34,15 @@
 .PARAMETER NoLock
     Don't use lock file to prevent concurrent runs
 
+.PARAMETER ValidateOnly
+    Validate existing database files without downloading
+
+.PARAMETER CheckNames
+    Check if database names are valid with the API
+
+.PARAMETER ListDatabases
+    List all available databases
+
 .EXAMPLE
     .\geoip-update.ps1 -ApiKey "your_key"
     Downloads all databases using production endpoint
@@ -86,7 +95,16 @@ param(
     [switch]$Quiet,
     
     [Parameter()]
-    [switch]$NoLock
+    [switch]$NoLock,
+    
+    [Parameter()]
+    [switch]$ValidateOnly,
+    
+    [Parameter()]
+    [switch]$CheckNames,
+    
+    [Parameter()]
+    [switch]$ListDatabases
 )
 
 # Set error action preference
@@ -789,6 +807,268 @@ function Update-Databases {
     }
 }
 
+# Validate existing database files
+function Test-DatabaseFiles {
+    Write-LogMessage -Level INFO -Message "Validating database files in: $TargetDirectory"
+    
+    if (-not (Test-Path -Path $TargetDirectory)) {
+        Exit-WithError -Message "Directory does not exist: $TargetDirectory"
+    }
+    
+    $totalFiles = 0
+    $validFiles = 0
+    $invalidFiles = 0
+    $hasErrors = $false
+    
+    # Validate MMDB files
+    Write-LogMessage -Level INFO -Message "Validating MMDB files..."
+    Get-ChildItem -Path $TargetDirectory -Filter "*.mmdb" -ErrorAction SilentlyContinue | ForEach-Object {
+        $totalFiles++
+        $fileName = $_.Name
+        $fileSize = $_.Length
+        
+        if ($fileSize -lt 1000) {
+            Write-Host "  ❌ $fileName - File too small (${fileSize}bytes)" -ForegroundColor Red
+            $invalidFiles++
+            $hasErrors = $true
+        }
+        else {
+            try {
+                # Check for MaxMind.com marker in the last 100KB
+                $readSize = [Math]::Min($fileSize, 100000)
+                $fileStream = [System.IO.File]::OpenRead($_.FullName)
+                $fileStream.Seek($fileSize - $readSize, [System.IO.SeekOrigin]::Begin) | Out-Null
+                
+                $buffer = New-Object byte[] $readSize
+                $bytesRead = $fileStream.Read($buffer, 0, $readSize)
+                $fileStream.Close()
+                
+                # Look for \xab\xcd\xef followed by MaxMind.com
+                $marker = [byte[]]@(0xab, 0xcd, 0xef) + [System.Text.Encoding]::ASCII.GetBytes("MaxMind.com")
+                $found = $false
+                
+                for ($i = 0; $i -le $bytesRead - $marker.Length; $i++) {
+                    $match = $true
+                    for ($j = 0; $j -lt $marker.Length; $j++) {
+                        if ($buffer[$i + $j] -ne $marker[$j]) {
+                            $match = $false
+                            break
+                        }
+                    }
+                    if ($match) {
+                        $found = $true
+                        break
+                    }
+                }
+                
+                if ($found) {
+                    $sizeMB = [Math]::Round($fileSize / 1MB, 2)
+                    Write-Host "  ✅ $fileName (${sizeMB}MB) - Valid MMDB format" -ForegroundColor Green
+                    $validFiles++
+                }
+                else {
+                    Write-Host "  ❌ $fileName - Invalid MMDB format (missing MaxMind metadata)" -ForegroundColor Red
+                    $invalidFiles++
+                    $hasErrors = $true
+                }
+            }
+            catch {
+                Write-Host "  ❌ $fileName - Error validating: $_" -ForegroundColor Red
+                $invalidFiles++
+                $hasErrors = $true
+            }
+        }
+    }
+    
+    # Validate BIN files
+    Write-LogMessage -Level INFO -Message "Validating BIN files..."
+    Get-ChildItem -Path $TargetDirectory -Filter "*.BIN" -ErrorAction SilentlyContinue | ForEach-Object {
+        $totalFiles++
+        $fileName = $_.Name
+        $fileSize = $_.Length
+        
+        if ($fileSize -lt 1000) {
+            Write-Host "  ❌ $fileName - File too small (${fileSize}bytes)" -ForegroundColor Red
+            $invalidFiles++
+            $hasErrors = $true
+        }
+        else {
+            # Basic check: BIN files should be binary
+            try {
+                $sizeMB = [Math]::Round($fileSize / 1MB, 2)
+                Write-Host "  ✅ $fileName (${sizeMB}MB) - Valid BIN format" -ForegroundColor Green
+                $validFiles++
+            }
+            catch {
+                Write-Host "  ⚠️  $fileName - Could not verify BIN format" -ForegroundColor Yellow
+            }
+        }
+    }
+    
+    # Summary
+    Write-Host ""
+    Write-LogMessage -Level INFO -Message "Validation Summary:"
+    Write-LogMessage -Level INFO -Message "  Total files: $totalFiles"
+    Write-LogMessage -Level INFO -Message "  Valid files: $validFiles"
+    Write-LogMessage -Level INFO -Message "  Invalid files: $invalidFiles"
+    
+    if ($totalFiles -eq 0) {
+        Exit-WithError -Message "No database files found!"
+    }
+    
+    if ($hasErrors) {
+        Exit-WithError -Message "Validation FAILED - some databases are invalid!"
+    }
+    else {
+        Write-LogMessage -Level SUCCESS -Message "Validation PASSED - all databases are valid!"
+        exit 0
+    }
+}
+
+# Check database names with API
+function Test-DatabaseNames {
+    if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+        Exit-WithError -Message "API key required for validation. Use -ApiKey parameter or set GEOIP_API_KEY environment variable"
+    }
+    
+    # Normalize endpoint
+    $ApiEndpoint = $ApiEndpoint.TrimEnd('/', ' ', "`t", "`n", "`r")
+    if ($ApiEndpoint -match 'geoipdb\.net$') {
+        $ApiEndpoint = "$ApiEndpoint/auth"
+    }
+    
+    if ($Databases -contains 'all') {
+        Write-Host "✓ Database selection 'all' is valid" -ForegroundColor Green
+        return
+    }
+    
+    # Convert databases to JSON
+    $body = @{ databases = @($Databases) } | ConvertTo-Json -Depth 10
+    
+    Write-LogMessage -Level INFO -Message "Validating database names: $($Databases -join ', ')"
+    
+    try {
+        $headers = @{ 'X-API-Key' = $ApiKey }
+        $response = Invoke-WebRequest -Uri $ApiEndpoint `
+                                     -Method POST `
+                                     -Headers $headers `
+                                     -Body $body `
+                                     -ContentType 'application/json' `
+                                     -UseBasicParsing `
+                                     -TimeoutSec 10 `
+                                     -ErrorAction Stop
+        
+        $result = $response.Content | ConvertFrom-Json
+        
+        if ($result.PSObject.Properties.Count -gt 0) {
+            Write-Host "✓ All database names are valid" -ForegroundColor Green
+            Write-Host "✓ Resolved to $($result.PSObject.Properties.Count) database(s)" -ForegroundColor Green
+            
+            # Show resolved databases
+            foreach ($prop in $result.PSObject.Properties) {
+                Write-Host "  → $($prop.Name)" -ForegroundColor Cyan
+            }
+        }
+        else {
+            Write-Host "✗ Validation failed: No databases resolved" -ForegroundColor Red
+            exit 1
+        }
+    }
+    catch {
+        if ($_.Exception.Response) {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            if ($statusCode -eq 400) {
+                # Try to extract error message
+                try {
+                    $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                    $errorContent = $reader.ReadToEnd()
+                    $reader.Close()
+                    $errorJson = $errorContent | ConvertFrom-Json
+                    if ($errorJson.detail) {
+                        Write-Host "✗ Validation failed: $($errorJson.detail)" -ForegroundColor Red
+                    }
+                    else {
+                        Write-Host "✗ Validation failed: Invalid database names" -ForegroundColor Red
+                    }
+                }
+                catch {
+                    Write-Host "✗ Validation failed: Invalid database names" -ForegroundColor Red
+                }
+            }
+            else {
+                Write-Host "✗ Validation failed: HTTP $statusCode" -ForegroundColor Red
+            }
+        }
+        else {
+            Write-Host "✗ Validation failed: Unable to connect to API" -ForegroundColor Red
+        }
+        exit 1
+    }
+}
+
+# List available databases
+function Get-AvailableDatabases {
+    # Convert /auth endpoint to /databases endpoint
+    $databasesEndpoint = $ApiEndpoint -replace '/auth$', '/databases'
+    
+    Write-LogMessage -Level INFO -Message "Fetching database information from: $databasesEndpoint"
+    
+    try {
+        $response = Invoke-WebRequest -Uri $databasesEndpoint `
+                                     -TimeoutSec 10 `
+                                     -UseBasicParsing `
+                                     -ErrorAction Stop
+        
+        $dbInfo = $response.Content | ConvertFrom-Json
+        
+        Write-Host "Available GeoIP Databases:" -ForegroundColor Cyan
+        Write-Host "=========================" -ForegroundColor Cyan
+        Write-Host ""
+        
+        Write-Host "Total databases: $($dbInfo.total)" -ForegroundColor Green
+        Write-Host ""
+        
+        if ($dbInfo.providers.maxmind) {
+            Write-Host "MaxMind databases ($($dbInfo.providers.maxmind.count)):" -ForegroundColor Yellow
+            foreach ($db in $dbInfo.providers.maxmind.databases) {
+                Write-Host "  • $($db.name) (aliases: $($db.aliases -join ', '))" -ForegroundColor White
+            }
+            Write-Host ""
+        }
+        
+        if ($dbInfo.providers.ip2location) {
+            Write-Host "IP2Location databases ($($dbInfo.providers.ip2location.count)):" -ForegroundColor Yellow
+            foreach ($db in $dbInfo.providers.ip2location.databases) {
+                Write-Host "  • $($db.name) (aliases: $($db.aliases -join ', '))" -ForegroundColor White
+            }
+            Write-Host ""
+        }
+        
+        Write-Host "Bulk Selection Options:" -ForegroundColor Cyan
+        Write-Host "  • all - All databases" -ForegroundColor White
+        Write-Host "  • maxmind/all - All MaxMind databases" -ForegroundColor White
+        Write-Host "  • ip2location/all - All IP2Location databases" -ForegroundColor White
+        Write-Host ""
+        
+        Write-Host "Usage Notes:" -ForegroundColor Cyan
+        Write-Host "  • Database names are case-insensitive" -ForegroundColor White
+        Write-Host "  • File extensions are optional in most cases" -ForegroundColor White
+        Write-Host "  • Use short aliases for easier selection" -ForegroundColor White
+    }
+    catch {
+        Write-LogMessage -Level WARN -Message "Database discovery not available, using fallback mode"
+        Write-Host "Database discovery not available." -ForegroundColor Yellow
+        Write-Host "Using legacy database list:" -ForegroundColor Yellow
+        Write-Host "  • GeoIP2-City.mmdb" -ForegroundColor White
+        Write-Host "  • GeoIP2-Country.mmdb" -ForegroundColor White
+        Write-Host "  • GeoIP2-ISP.mmdb" -ForegroundColor White
+        Write-Host "  • GeoIP2-Connection-Type.mmdb" -ForegroundColor White
+        Write-Host "  • IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN" -ForegroundColor White
+        Write-Host "  • IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN" -ForegroundColor White
+        Write-Host "  • IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN" -ForegroundColor White
+    }
+}
+
 # Cleanup function
 function Invoke-Cleanup {
     Write-LogMessage -Level INFO -Message "Performing cleanup"
@@ -827,6 +1107,23 @@ $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
 try {
     Write-LogMessage -Level INFO -Message "GeoIP Update Script starting"
     
+    # Handle special modes
+    if ($ValidateOnly) {
+        Test-DatabaseFiles
+        exit 0
+    }
+    
+    if ($CheckNames) {
+        Test-DatabaseNames
+        exit 0
+    }
+    
+    if ($ListDatabases) {
+        Get-AvailableDatabases
+        exit 0
+    }
+    
+    # Normal update mode
     # Validate configuration
     Test-Configuration
     

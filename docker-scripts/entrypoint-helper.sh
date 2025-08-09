@@ -292,37 +292,53 @@ geoip_download_databases() {
 geoip_validate_databases() {
     geoip_log_info "Validating GeoIP databases..."
     
-    # Try Python validation if available
-    if command -v python3 >/dev/null 2>&1 && [ -f /opt/geoip/geoip-update.py ]; then
-        geoip_log_info "Using Python validation..."
-        if python3 /opt/geoip/geoip-update.py --validate --directory "$GEOIP_TARGET_DIR" 2>/dev/null; then
-            geoip_log_success "Database validation passed (Python)"
-            return 0
-        else
-            geoip_log_warning "Python validation failed, trying basic validation..."
-        fi
-    fi
-    
-    # Fallback to basic validation
-    if [ -f /opt/geoip/validate.sh ]; then
-        geoip_log_info "Using basic validation..."
-        if /opt/geoip/validate.sh "$GEOIP_TARGET_DIR"; then
-            geoip_log_success "Database validation passed (basic)"
-            return 0
-        else
-            geoip_log_error "Database validation failed!"
+    # Detect environment and select best script if not done yet
+    if [ -z "$SELECTED_SCRIPT" ]; then
+        geoip_detect_environment
+        geoip_select_best_script || {
+            geoip_log_error "No suitable script found for validation"
             return 1
-        fi
+        }
     fi
     
-    # If no validation available, just check files exist
-    geoip_log_warning "No validation script available, checking file existence only"
-    if geoip_check_databases; then
-        geoip_log_success "Databases exist"
+    # Use the same selected script for validation
+    # Build validation command
+    local validation_cmd="$SELECTED_SCRIPT --validate-only --directory '$GEOIP_TARGET_DIR'"
+    
+    if [ "$GEOIP_QUIET_MODE" = "true" ]; then
+        validation_cmd="$validation_cmd --quiet"
+    fi
+    
+    geoip_log_info "Using selected script for validation: $SELECTED_SCRIPT"
+    
+    # Execute validation
+    if sh -c "$validation_cmd" 2>/dev/null; then
+        geoip_log_success "Database validation passed"
         return 0
     else
-        geoip_log_error "Databases missing!"
-        return 1
+        # If selected script doesn't support --validate-only, try validate.sh
+        geoip_log_warning "Selected script validation failed, trying fallback validation..."
+        
+        if [ -f /opt/geoip/validate.sh ]; then
+            geoip_log_info "Using validate.sh fallback..."
+            if /opt/geoip/validate.sh --directory "$GEOIP_TARGET_DIR"; then
+                geoip_log_success "Database validation passed (validate.sh)"
+                return 0
+            else
+                geoip_log_error "Database validation failed!"
+                return 1
+            fi
+        fi
+        
+        # Last resort: just check files exist
+        geoip_log_warning "No validation available, checking file existence only"
+        if geoip_check_databases; then
+            geoip_log_success "Databases exist"
+            return 0
+        else
+            geoip_log_error "Databases missing!"
+            return 1
+        fi
     fi
 }
 

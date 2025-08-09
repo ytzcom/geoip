@@ -44,6 +44,8 @@ QUIET_MODE=false
 VERBOSE_MODE=false
 LOG_FILE=""
 VALIDATE_ONLY=false
+CHECK_NAMES_MODE=false
+VALIDATE_ONLY_MODE=false
 
 # Parallel download settings
 MAX_PARALLEL=4
@@ -189,8 +191,12 @@ parse_arguments() {
                 LOG_FILE="$2"
                 shift 2
                 ;;
-            --validate)
-                VALIDATE_ONLY=true
+            --check-names)
+                CHECK_NAMES_MODE=true
+                shift
+                ;;
+            --validate-only)
+                VALIDATE_ONLY_MODE=true
                 shift
                 ;;
             --list-databases)
@@ -199,10 +205,6 @@ parse_arguments() {
                 ;;
             --show-examples)
                 show_examples
-                exit 0
-                ;;
-            --validate-only)
-                validate_database_names
                 exit 0
                 ;;
             --version)
@@ -822,7 +824,116 @@ show_examples() {
     echo "  $0 --api-key test-key-1 --endpoint http://localhost:8080/auth --databases \"city\""
 }
 
-validate_database_names() {
+# Validate existing database files
+validate_database_files() {
+    log INFO "Validating database files in: $TARGET_DIR"
+    
+    # Check if directory exists
+    if [ ! -d "$TARGET_DIR" ]; then
+        log ERROR "Directory does not exist: $TARGET_DIR"
+        exit 1
+    fi
+    
+    total_files=0
+    valid_files=0
+    invalid_files=0
+    has_errors=false
+    
+    # Validate MMDB files
+    log INFO "Validating MMDB files..."
+    for mmdb_file in "$TARGET_DIR"/*.mmdb; do
+        if [ -f "$mmdb_file" ]; then
+            total_files=$((total_files + 1))
+            basename_file=$(basename "$mmdb_file")
+            size=$(wc -c < "$mmdb_file" 2>/dev/null || echo 0)
+            
+            if [ "$size" -lt 1000 ]; then
+                log ERROR "  ❌ $basename_file - File too small ($size bytes)"
+                invalid_files=$((invalid_files + 1))
+                has_errors=true
+                continue
+            fi
+            
+            # Check for MaxMind.com marker
+            # Check for MaxMind metadata marker (metadata can be up to 128KB per spec)
+            # Try xxd first for reliable binary pattern matching
+            mmdb_valid=false
+            if command -v xxd >/dev/null 2>&1; then
+                if tail -c 131072 "$mmdb_file" 2>/dev/null | xxd -p | tr -d '\n' | grep -q "abcdef4d61784d696e642e636f6d" 2>/dev/null; then
+                    mmdb_valid=true
+                fi
+            elif tail -c 131072 "$mmdb_file" 2>/dev/null | grep -a -q "$(printf '\xab\xcd\xef')MaxMind.com" 2>/dev/null; then
+                mmdb_valid=true
+            fi
+            
+            if [ "$mmdb_valid" = "true" ]; then
+                size_mb=$((size / 1024 / 1024))
+                log SUCCESS "  ✅ $basename_file (${size_mb}MB) - Valid MMDB format"
+                valid_files=$((valid_files + 1))
+            else
+                log ERROR "  ❌ $basename_file - Invalid MMDB format (missing MaxMind metadata)"
+                invalid_files=$((invalid_files + 1))
+                has_errors=true
+            fi
+        fi
+    done
+    
+    # Validate BIN files
+    log INFO "Validating BIN files..."
+    for bin_file in "$TARGET_DIR"/*.BIN; do
+        if [ -f "$bin_file" ]; then
+            total_files=$((total_files + 1))
+            basename_file=$(basename "$bin_file")
+            size=$(wc -c < "$bin_file" 2>/dev/null || echo 0)
+            
+            if [ "$size" -lt 1000 ]; then
+                log ERROR "  ❌ $basename_file - File too small ($size bytes)"
+                invalid_files=$((invalid_files + 1))
+                has_errors=true
+                continue
+            fi
+            
+            # Basic check: BIN files should be binary
+            if command -v file >/dev/null 2>&1; then
+                if file "$bin_file" 2>/dev/null | grep -q "data\|binary" 2>/dev/null; then
+                    size_mb=$((size / 1024 / 1024))
+                    log SUCCESS "  ✅ $basename_file (${size_mb}MB) - Valid BIN format"
+                    valid_files=$((valid_files + 1))
+                else
+                    log WARN "  ⚠️  $basename_file - Could not verify BIN format (may still be valid)"
+                fi
+            else
+                # If 'file' command not available, just check size
+                size_mb=$((size / 1024 / 1024))
+                log SUCCESS "  ✅ $basename_file (${size_mb}MB) - BIN file present"
+                valid_files=$((valid_files + 1))
+            fi
+        fi
+    done
+    
+    # Summary
+    echo ""
+    log INFO "Validation Summary:"
+    log INFO "  Total files: $total_files"
+    log INFO "  Valid files: $valid_files"
+    log INFO "  Invalid files: $invalid_files"
+    
+    if [ "$total_files" -eq 0 ]; then
+        log ERROR "No database files found!"
+        exit 1
+    fi
+    
+    if [ "$has_errors" = "true" ]; then
+        log ERROR "Validation FAILED - some databases are invalid!"
+        exit 1
+    else
+        log SUCCESS "Validation PASSED - all databases are valid!"
+        exit 0
+    fi
+}
+
+# Check database names with API
+check_database_names() {
     if [ -z "$API_KEY" ]; then
         log ERROR "API key required for validation. Use --api-key option or set GEOIP_API_KEY environment variable"
         exit 1
@@ -904,6 +1015,17 @@ main() {
     # Parse arguments
     parse_arguments "$@"
     
+    # Handle special modes
+    if [ "$VALIDATE_ONLY_MODE" = "true" ]; then
+        validate_database_files
+        exit $?
+    fi
+    
+    if [ "$CHECK_NAMES_MODE" = "true" ]; then
+        check_database_names
+        exit $?
+    fi
+    
     # Load config file if specified
     if [ -n "$CONFIG_FILE" ]; then
         load_config "$CONFIG_FILE" || exit 1
@@ -927,10 +1049,7 @@ main() {
     log INFO "GeoIP Update Script (POSIX) v$VERSION"
     
     # Validate only mode
-    if [ "$VALIDATE_ONLY" = "true" ]; then
-        validate_databases
-        exit $?
-    fi
+    # Remove deprecated VALIDATE_ONLY flag handling
     
     # Validate configuration
     validate_config || exit 1

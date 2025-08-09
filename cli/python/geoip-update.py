@@ -687,8 +687,123 @@ async def show_examples_command(config: Config):
     print('  geoip-update --api-key test-key-1 --endpoint http://localhost:8080/auth --databases "city"')
 
 
-async def validate_databases_command(config: Config):
-    """Validate database names without downloading."""
+def validate_database_files_command(config: Config):
+    """Validate existing database files."""
+    import glob
+    
+    setup_logging(config)
+    logger = logging.getLogger('geoip-update')
+    logger.info("Validating database files...")
+    
+    # Check if directory exists
+    if not config.target_dir.exists():
+        logger.error(f"Directory does not exist: {config.target_dir}")
+        sys.exit(1)
+    
+    total_files = 0
+    valid_files = 0
+    invalid_files = 0
+    has_errors = False
+    
+    # Validate MMDB files
+    mmdb_files = glob.glob(str(config.target_dir / "*.mmdb"))
+    for file_path in mmdb_files:
+        total_files += 1
+        file_path = Path(file_path)
+        basename = file_path.name
+        
+        # Check file size
+        try:
+            size = file_path.stat().st_size
+            if size < 1000:
+                logger.error(f"  ❌ {basename} - File too small ({size} bytes)")
+                invalid_files += 1
+                has_errors = True
+                continue
+        except Exception as e:
+            logger.error(f"  ❌ {basename} - Cannot read file: {e}")
+            invalid_files += 1
+            has_errors = True
+            continue
+        
+        # Validate MMDB format
+        try:
+            # Check for MaxMind.com marker in last 100KB
+            with open(file_path, 'rb') as f:
+                f.seek(max(0, size - 100000))
+                content = f.read()
+                if b'\xab\xcd\xefMaxMind.com' not in content:
+                    logger.error(f"  ❌ {basename} - Invalid MMDB format (missing MaxMind metadata)")
+                    invalid_files += 1
+                    has_errors = True
+                else:
+                    size_mb = size // (1024 * 1024)
+                    logger.info(f"  ✅ {basename} ({size_mb}MB) - Valid MMDB format")
+                    valid_files += 1
+        except Exception as e:
+            logger.error(f"  ❌ {basename} - Error validating: {e}")
+            invalid_files += 1
+            has_errors = True
+    
+    # Validate BIN files
+    bin_files = glob.glob(str(config.target_dir / "*.BIN"))
+    for file_path in bin_files:
+        total_files += 1
+        file_path = Path(file_path)
+        basename = file_path.name
+        
+        # Check file size
+        try:
+            size = file_path.stat().st_size
+            if size < 1000:
+                logger.error(f"  ❌ {basename} - File too small ({size} bytes)")
+                invalid_files += 1
+                has_errors = True
+                continue
+        except Exception as e:
+            logger.error(f"  ❌ {basename} - Cannot read file: {e}")
+            invalid_files += 1
+            has_errors = True
+            continue
+        
+        # Basic BIN validation - check if it's binary data
+        try:
+            with open(file_path, 'rb') as f:
+                sample = f.read(100)
+                # Check for non-printable characters (binary data)
+                is_binary = any(b < 0x20 and b not in (0x09, 0x0A, 0x0D) for b in sample)
+                
+                if is_binary:
+                    size_mb = size // (1024 * 1024)
+                    logger.info(f"  ✅ {basename} ({size_mb}MB) - Valid BIN format")
+                    valid_files += 1
+                else:
+                    logger.warning(f"  ⚠️  {basename} - Could not verify BIN format (may still be valid)")
+        except Exception as e:
+            logger.error(f"  ❌ {basename} - Error validating: {e}")
+            invalid_files += 1
+            has_errors = True
+    
+    # Summary
+    logger.info("\nValidation Summary:")
+    logger.info(f"  Total files: {total_files}")
+    logger.info(f"  Valid files: {valid_files}")
+    logger.info(f"  Invalid files: {invalid_files}")
+    
+    if total_files == 0:
+        logger.error("\n✗ No database files found!")
+        sys.exit(1)
+    
+    if has_errors:
+        logger.error("\n✗ Validation FAILED - some databases are invalid!")
+        sys.exit(1)
+    else:
+        logger.info("\n✓ Validation PASSED - all databases are valid!")
+        sys.exit(0)
+
+
+async def check_database_names_command(config: Config):
+    """Validate database names with API without downloading."""
     if not config.databases or config.databases == ['all']:
         print("✓ Database selection 'all' is valid")
         return
@@ -744,11 +859,12 @@ async def validate_databases_command(config: Config):
 @click.option('--no-ssl-verify', is_flag=True, help="Don't verify SSL certificates (not recommended)")
 @click.option('--list-databases', is_flag=True, help='List all available databases and aliases')
 @click.option('--show-examples', is_flag=True, help='Show usage examples for database selection')
-@click.option('--validate-only', is_flag=True, help='Validate database names without downloading')
+@click.option('--check-names', is_flag=True, help='Validate database names with API without downloading')
+@click.option('--validate-only', is_flag=True, help='Validate existing database files')
 @click.version_option(version='1.0.0')
 def main(api_key, endpoint, directory, databases, config, log_file, retries, 
          timeout, concurrent, quiet, verbose, no_lock, no_ssl_verify,
-         list_databases, show_examples, validate_only):
+         list_databases, show_examples, check_names, validate_only):
     """Download GeoIP databases from authenticated API."""
     
     # Create default config
@@ -810,11 +926,16 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
         asyncio.run(show_examples_command(config_obj))
         return
     
-    if validate_only:
+    if check_names:
         if not config_obj.api_key:
-            logger.error("API key required for validation. Use --api-key or set GEOIP_API_KEY")
+            logger.error("API key required for name checking. Use --api-key or set GEOIP_API_KEY")
             sys.exit(1)
-        asyncio.run(validate_databases_command(config_obj))
+        asyncio.run(check_database_names_command(config_obj))
+        return
+    
+    if validate_only:
+        # Validate existing database files
+        validate_database_files_command(config_obj)
         return
     
     # Validate configuration

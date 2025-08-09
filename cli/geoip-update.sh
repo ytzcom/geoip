@@ -72,6 +72,8 @@ USE_LOCK=true
 MAX_RETRIES=$DEFAULT_RETRIES
 TIMEOUT=$DEFAULT_TIMEOUT
 TEMP_DIR=""
+VALIDATE_ONLY_MODE=false
+CHECK_NAMES_MODE=false
 
 # Color codes for output (disabled in quiet mode)
 RED='\033[0;31m'
@@ -182,9 +184,14 @@ parse_args() {
                 show_examples
                 exit 0
                 ;;
+            -C|--check-names)
+                CHECK_NAMES_MODE=true
+                shift
+                ;;
             -V|--validate-only)
-                validate_database_names
-                exit 0
+                # Don't exit immediately, let parse_args complete
+                VALIDATE_ONLY_MODE=true
+                shift
                 ;;
             -h|--help)
                 show_help
@@ -474,7 +481,9 @@ download_database() {
             if [[ "$db_name" == *.mmdb ]]; then
                 # Check if it's a valid MMDB file by looking for MaxMind metadata marker at the end
                 # MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
-                if ! tail -c 100000 "$temp_file" 2>/dev/null | grep -a -q $'\xab\xcd\xef'MaxMind.com 2>/dev/null; then
+                # Check for MaxMind metadata marker (metadata can be up to 128KB per spec)
+                # Using xxd for reliable binary pattern matching
+                if command -v xxd >/dev/null 2>&1 && ! tail -c 131072 "$temp_file" 2>/dev/null | xxd -p | tr -d '\n' | grep -q "abcdef4d61784d696e642e636f6d" 2>/dev/null; then
                     log WARN "MMDB file $db_name may be invalid: missing MaxMind metadata marker"
                 fi
             elif [[ "$db_name" == *.BIN ]]; then
@@ -710,7 +719,97 @@ show_examples() {
     echo "  $SCRIPT_NAME --api-key test-key-1 --endpoint http://localhost:8080/auth --databases \"city\""
 }
 
-validate_database_names() {
+# Validate existing database files
+validate_database_files() {
+    log INFO "Validating database files in: $TARGET_DIR"
+    
+    # Check if directory exists
+    if [[ ! -d "$TARGET_DIR" ]]; then
+        error "Directory does not exist: $TARGET_DIR"
+    fi
+    
+    local total_files=0
+    local valid_files=0
+    local invalid_files=0
+    local has_errors=false
+    
+    # Validate MMDB files
+    log INFO "Validating MMDB files..."
+    for mmdb_file in "$TARGET_DIR"/*.mmdb; do
+        if [[ -f "$mmdb_file" ]]; then
+            ((total_files++))
+            local basename=$(basename "$mmdb_file")
+            local size=$(wc -c < "$mmdb_file" 2>/dev/null || echo 0)
+            
+            if [[ $size -lt 1000 ]]; then
+                log ERROR "  ❌ $basename - File too small ($size bytes)"
+                ((invalid_files++))
+                has_errors=true
+                continue
+            fi
+            
+            # Check for MaxMind.com marker
+            # Check for MaxMind metadata marker (metadata can be up to 128KB per spec)
+            # Using xxd for reliable binary pattern matching
+            if command -v xxd >/dev/null 2>&1 && tail -c 131072 "$mmdb_file" 2>/dev/null | xxd -p | tr -d '\n' | grep -q "abcdef4d61784d696e642e636f6d" 2>/dev/null; then
+                local size_mb=$((size / 1024 / 1024))
+                log SUCCESS "  ✅ $basename (${size_mb}MB) - Valid MMDB format"
+                ((valid_files++))
+            else
+                log ERROR "  ❌ $basename - Invalid MMDB format (missing MaxMind metadata)"
+                ((invalid_files++))
+                has_errors=true
+            fi
+        fi
+    done
+    
+    # Validate BIN files
+    log INFO "Validating BIN files..."
+    for bin_file in "$TARGET_DIR"/*.BIN; do
+        if [[ -f "$bin_file" ]]; then
+            ((total_files++))
+            local basename=$(basename "$bin_file")
+            local size=$(wc -c < "$bin_file" 2>/dev/null || echo 0)
+            
+            if [[ $size -lt 1000 ]]; then
+                log ERROR "  ❌ $basename - File too small ($size bytes)"
+                ((invalid_files++))
+                has_errors=true
+                continue
+            fi
+            
+            # Basic check: BIN files should be binary
+            if file "$bin_file" 2>/dev/null | grep -q "data\|binary" 2>/dev/null; then
+                local size_mb=$((size / 1024 / 1024))
+                log SUCCESS "  ✅ $basename (${size_mb}MB) - Valid BIN format"
+                ((valid_files++))
+            else
+                log WARN "  ⚠️  $basename - Could not verify BIN format (may still be valid)"
+            fi
+        fi
+    done
+    
+    # Summary
+    echo ""
+    log INFO "Validation Summary:"
+    log INFO "  Total files: $total_files"
+    log INFO "  Valid files: $valid_files"
+    log INFO "  Invalid files: $invalid_files"
+    
+    if [[ $total_files -eq 0 ]]; then
+        error "No database files found!"
+    fi
+    
+    if [[ "$has_errors" == "true" ]]; then
+        error "Validation FAILED - some databases are invalid!"
+    else
+        log SUCCESS "Validation PASSED - all databases are valid!"
+        exit 0
+    fi
+}
+
+# Check database names with API
+check_database_names() {
     if [[ -z "$API_KEY" ]]; then
         error "API key required for validation. Use -k option or set GEOIP_API_KEY environment variable"
     fi
@@ -787,6 +886,17 @@ main() {
     # Set quiet mode for logging
     if [[ "$QUIET_MODE" == "true" ]]; then
         VERBOSE_MODE=false
+    fi
+    
+    # Handle special modes
+    if [[ "$VALIDATE_ONLY_MODE" == "true" ]]; then
+        validate_database_files
+        exit $?
+    fi
+    
+    if [[ "$CHECK_NAMES_MODE" == "true" ]]; then
+        check_database_names
+        exit $?
     fi
     
     log INFO "GeoIP Update Script starting"

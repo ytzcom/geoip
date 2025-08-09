@@ -12,7 +12,7 @@ This directory contains the scripts-only Docker image for easy GeoIP integration
 - **geoip-update.ps1** - PowerShell script (for Windows containers)
 - **entrypoint-helper.sh** - Smart Docker entrypoint helper with auto-detection
 - **setup-cron.sh** - Multi-system cron configuration
-- **validate.sh** - Basic validation without Python
+- **validate.sh** - Enhanced database validation with MMDB format verification
 
 ## 🧠 Smart Script Selection
 
@@ -131,6 +131,14 @@ When you source `entrypoint-helper.sh`, these functions become available:
   - Shows count and total size
   - Useful for Docker health checks
 
+### Validation Functions
+
+- **`geoip_validate_specific`** - Validate specific databases
+  - Usage: `geoip_validate_specific /path/to/databases`
+  - Enhanced MMDB validation with reliable binary pattern matching
+  - Cross-platform BIN file validation
+  - Returns detailed validation results
+
 ### Logging Functions
 
 - `geoip_log_info` - Information messages
@@ -213,14 +221,40 @@ volumes:
   geoip-data:
 ```
 
-## 🔍 Validation
+## 🔍 Enhanced Validation
 
-The validation script checks:
+The validation system provides comprehensive database verification:
 
-1. Required databases exist (GeoIP2-City.mmdb, GeoIP2-Country.mmdb)
-2. File sizes are reasonable (not error pages)
-3. MMDB format markers (if tools available)
-4. Optional databases (logged but don't fail)
+### MMDB Files (MaxMind)
+- **Metadata marker validation**: Searches for `\xab\xcd\xefMaxMind.com` using reliable binary pattern matching
+- **Cross-platform detection**: Uses `xxd` with hex pattern matching, falls back to `strings` or `grep`
+- **Spec compliance**: Searches last 128KB of file per MaxMind DB specification
+- **Size verification**: Ensures files aren't error pages or corrupted downloads
+
+### BIN Files (IP2Location)
+- **Binary format validation**: Verifies files contain binary data patterns
+- **IP2Location markers**: Detects IP2Location-specific strings and metadata
+- **Provider verification**: Confirms files match expected IP2Location format
+- **Fallback validation**: Multiple detection methods for maximum compatibility
+
+### Usage Examples
+
+```bash
+# Direct validation script
+./validate.sh --directory /app/resources/geoip --verbose
+
+# Via CLI scripts with validation flag
+./geoip-update.sh --validate-only --directory /data/geoip
+
+# In Docker container
+docker run --rm -v /data:/data ytzcom/geoip-updater --validate-only
+```
+
+### Validation Features
+- **Exit codes**: 0 for success, 1 for validation failures, 2 for invalid arguments
+- **Detailed logging**: Shows which files pass/fail validation with reasons
+- **Quiet mode**: Silent operation suitable for health checks and monitoring
+- **Verbose mode**: Detailed debugging information for troubleshooting
 
 ## 🚑 Troubleshooting
 
@@ -239,8 +273,10 @@ The validation script checks:
 ### Validation failing
 
 1. Check file sizes: `ls -lh $GEOIP_TARGET_DIR`
-2. Run manual validation: `/opt/geoip/validate.sh`
-3. Try Python validation: `python3 /opt/geoip/geoip-update.py --validate`
+2. Run enhanced validation: `/opt/geoip/validate.sh --directory $GEOIP_TARGET_DIR --verbose`
+3. Try script validation: `/opt/geoip/geoip-update.sh --validate-only --verbose`
+4. Check for validation tools: `which xxd strings file` (validation uses available tools)
+5. Force redownload: `rm $GEOIP_TARGET_DIR/*.{mmdb,BIN} && geoip_download_databases`
 
 ## 📚 Advanced Usage
 

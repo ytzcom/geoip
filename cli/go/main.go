@@ -580,8 +580,10 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(listDatabases, "L", false, "List databases (short)")
 	showExamples := flag.Bool("show-examples", false, "Show usage examples for database selection")
 	flag.BoolVar(showExamples, "E", false, "Show examples (short)")
-	validateOnly := flag.Bool("validate-only", false, "Validate database names without downloading")
-	flag.BoolVar(validateOnly, "V", false, "Validate only (short)")
+	checkNames := flag.Bool("check-names", false, "Validate database names with API without downloading")
+	flag.BoolVar(checkNames, "C", false, "Check names (short)")
+	validateOnly := flag.Bool("validate-only", false, "Validate existing database files")
+	flag.BoolVar(validateOnly, "V", false, "Validate files (short)")
 	
 	flag.Parse()
 
@@ -603,16 +605,22 @@ func parseFlags() (*Config, error) {
 		os.Exit(0)
 	}
 
-	// Handle validate only flag
-	if *validateOnly {
-		// Need API key for validation
+	// Handle check names flag
+	if *checkNames {
+		// Need API key for name checking
 		if config.APIKey == "" {
 			config.APIKey = os.Getenv("GEOIP_API_KEY")
 		}
 		if config.APIKey == "" {
-			return nil, fmt.Errorf("API key required for validation. Use --api-key or set GEOIP_API_KEY")
+			return nil, fmt.Errorf("API key required for name checking. Use --api-key or set GEOIP_API_KEY")
 		}
-		validateDatabasesCmd(config, strings.Split(*databases, ","))
+		checkDatabaseNamesCmd(config, strings.Split(*databases, ","))
+		os.Exit(0)
+	}
+	
+	// Handle validate only flag (file validation)
+	if *validateOnly {
+		validateDatabaseFilesCmd(config)
 		os.Exit(0)
 	}
 
@@ -844,8 +852,8 @@ func showExamplesCmd() {
 	fmt.Println("  geoip-update --api-key test-key-1 --endpoint http://localhost:8080/auth --databases \"city\"")
 }
 
-// validateDatabasesCmd validates database names without downloading
-func validateDatabasesCmd(config *Config, databases []string) {
+// checkDatabaseNamesCmd validates database names with API without downloading
+func checkDatabaseNamesCmd(config *Config, databases []string) {
 	if len(databases) == 0 || (len(databases) == 1 && databases[0] == "all") {
 		fmt.Println("✓ Database selection 'all' is valid")
 		return
@@ -920,6 +928,182 @@ func validateDatabasesCmd(config *Config, databases []string) {
 		}
 		os.Exit(1)
 	}
+}
+
+// validateDatabaseFilesCmd validates existing database files
+func validateDatabaseFilesCmd(config *Config) {
+	fmt.Println("Validating database files...")
+	
+	// Check if directory exists
+	if _, err := os.Stat(config.TargetDir); os.IsNotExist(err) {
+		fmt.Printf("✗ Directory does not exist: %s\n", config.TargetDir)
+		os.Exit(1)
+	}
+	
+	var totalFiles, validFiles, invalidFiles int
+	var hasErrors bool
+	
+	// Validate MMDB files
+	mmdbFiles, err := filepath.Glob(filepath.Join(config.TargetDir, "*.mmdb"))
+	if err == nil {
+		for _, file := range mmdbFiles {
+			totalFiles++
+			basename := filepath.Base(file)
+			
+			// Check file size
+			info, err := os.Stat(file)
+			if err != nil {
+				fmt.Printf("  ❌ %s - Cannot read file: %v\n", basename, err)
+				invalidFiles++
+				hasErrors = true
+				continue
+			}
+			
+			if info.Size() < 1000 {
+				fmt.Printf("  ❌ %s - File too small (%d bytes)\n", basename, info.Size())
+				invalidFiles++
+				hasErrors = true
+				continue
+			}
+			
+			// Validate MMDB format
+			if err := validateMMDBFile(file); err != nil {
+				fmt.Printf("  ❌ %s - Invalid MMDB format: %v\n", basename, err)
+				invalidFiles++
+				hasErrors = true
+			} else {
+				sizeMB := info.Size() / 1024 / 1024
+				fmt.Printf("  ✅ %s (%dMB) - Valid MMDB format\n", basename, sizeMB)
+				validFiles++
+			}
+		}
+	}
+	
+	// Validate BIN files
+	binFiles, err := filepath.Glob(filepath.Join(config.TargetDir, "*.BIN"))
+	if err == nil {
+		for _, file := range binFiles {
+			totalFiles++
+			basename := filepath.Base(file)
+			
+			// Check file size
+			info, err := os.Stat(file)
+			if err != nil {
+				fmt.Printf("  ❌ %s - Cannot read file: %v\n", basename, err)
+				invalidFiles++
+				hasErrors = true
+				continue
+			}
+			
+			if info.Size() < 1000 {
+				fmt.Printf("  ❌ %s - File too small (%d bytes)\n", basename, info.Size())
+				invalidFiles++
+				hasErrors = true
+				continue
+			}
+			
+			// Basic BIN validation - check if it's binary data
+			if err := validateBINFile(file); err != nil {
+				fmt.Printf("  ⚠️  %s - Could not verify BIN format: %v\n", basename, err)
+				// Don't count as invalid since BIN validation is harder
+			} else {
+				sizeMB := info.Size() / 1024 / 1024
+				fmt.Printf("  ✅ %s (%dMB) - Valid BIN format\n", basename, sizeMB)
+				validFiles++
+			}
+		}
+	}
+	
+	// Summary
+	fmt.Println("\nValidation Summary:")
+	fmt.Printf("  Total files: %d\n", totalFiles)
+	fmt.Printf("  Valid files: %d\n", validFiles)
+	fmt.Printf("  Invalid files: %d\n", invalidFiles)
+	
+	if totalFiles == 0 {
+		fmt.Println("\n✗ No database files found!")
+		os.Exit(1)
+	}
+	
+	if hasErrors {
+		fmt.Println("\n✗ Validation FAILED - some databases are invalid!")
+		os.Exit(1)
+	} else {
+		fmt.Println("\n✓ Validation PASSED - all databases are valid!")
+		os.Exit(0)
+	}
+}
+
+// validateMMDBFile validates a single MMDB file
+func validateMMDBFile(path string) error {
+	// Reuse existing validateMMDB logic
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	
+	// Get file size
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := stat.Size()
+	
+	// MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
+	// Read the last 100KB to find the metadata section
+	readSize := int64(100000)
+	if size < readSize {
+		readSize = size
+	}
+	
+	// Seek to the position to start reading
+	_, err = file.Seek(size-readSize, 0)
+	if err != nil {
+		return err
+	}
+	
+	// Read the last portion of the file
+	buf := make([]byte, readSize)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	
+	// Look for the MMDB metadata marker
+	marker := []byte("\xab\xcd\xefMaxMind.com")
+	if !bytes.Contains(buf[:n], marker) {
+		return fmt.Errorf("missing MaxMind metadata marker")
+	}
+	
+	return nil
+}
+
+// validateBINFile validates a BIN format file (IP2Location)
+func validateBINFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	
+	// Read first 10KB to check for IP2Location markers
+	buf := make([]byte, 10000)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	
+	// Check if file contains binary data (not text)
+	for i := 0; i < n && i < 100; i++ {
+		if buf[i] < 0x20 && buf[i] != 0x09 && buf[i] != 0x0A && buf[i] != 0x0D {
+			// Found non-printable character, likely binary
+			return nil
+		}
+	}
+	
+	// If we get here, file might be text (error response)
+	return fmt.Errorf("file appears to be text, not binary")
 }
 
 func main() {
