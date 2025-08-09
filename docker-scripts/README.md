@@ -260,8 +260,8 @@ docker run --rm -v /data:/data ytzcom/geoip-updater --validate-only
 
 ### Databases not downloading
 
-1. Check API key is set: `echo $GEOIP_API_KEY`
-2. Test manually: `/opt/geoip/geoip-update.sh --api-key your-key`
+1. Check API key is set: `[ -n "$GEOIP_API_KEY" ] && echo "API key is configured" || echo "API key is missing"`
+2. Test manually: `/opt/geoip/geoip-update.sh --api-key $GEOIP_API_KEY`
 3. Check logs: `cat $GEOIP_LOG_FILE`
 
 ### Cron not working
