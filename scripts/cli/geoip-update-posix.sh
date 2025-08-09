@@ -29,7 +29,8 @@ VERSION="2.0.0-posix"
 
 # Default values
 API_KEY="${GEOIP_API_KEY:-}"
-API_ENDPOINT="${GEOIP_API_ENDPOINT:-https://geoipdb.net/auth}"
+# Clean any trailing whitespace from the endpoint (tr doesn't handle Unicode escapes in POSIX sh)
+API_ENDPOINT=$(echo "${GEOIP_API_ENDPOINT:-https://geoipdb.net/auth}" | sed 's/[[:space:]]*$//')
 DEFAULT_ENDPOINT="https://geoipdb.net/auth"
 TARGET_DIR="${GEOIP_TARGET_DIR:-.}"
 DATABASES="${GEOIP_DATABASES:-all}"
@@ -70,25 +71,25 @@ log() {
         echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
     fi
     
-    # Log to console unless quiet
+    # Log to console unless quiet (all output goes to stderr to avoid mixing with data)
     if [ "$QUIET_MODE" = "false" ]; then
         case "$level" in
             ERROR)
                 printf "${RED}[ERROR]${NC} %s\n" "$message" >&2
                 ;;
             SUCCESS)
-                printf "${GREEN}[SUCCESS]${NC} %s\n" "$message"
+                printf "${GREEN}[SUCCESS]${NC} %s\n" "$message" >&2
                 ;;
             WARNING)
-                printf "${YELLOW}[WARNING]${NC} %s\n" "$message"
+                printf "${YELLOW}[WARNING]${NC} %s\n" "$message" >&2
                 ;;
             INFO)
                 if [ "$VERBOSE_MODE" = "true" ]; then
-                    printf "[INFO] %s\n" "$message"
+                    printf "[INFO] %s\n" "$message" >&2
                 fi
                 ;;
             *)
-                printf "[%s] %s\n" "$level" "$message"
+                printf "[%s] %s\n" "$level" "$message" >&2
                 ;;
         esac
     elif [ "$level" = "ERROR" ]; then
@@ -271,6 +272,20 @@ validate_config() {
         return 1
     fi
     
+    # Clean the endpoint of any trailing slashes or whitespace
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    # Ensure the endpoint has /auth if it's missing
+    case "$API_ENDPOINT" in
+        */auth) ;;
+        *) 
+            if [ "$API_ENDPOINT" = "https://geoipdb.net" ] || [ "$API_ENDPOINT" = "http://geoipdb.net" ]; then
+                API_ENDPOINT="$API_ENDPOINT/auth"
+                log INFO "Appended /auth to endpoint: $API_ENDPOINT"
+            fi
+            ;;
+    esac
+    
     # Check if endpoint is localhost (for testing)
     case "$API_ENDPOINT" in
         http://localhost*|http://127.0.0.1*)
@@ -315,6 +330,8 @@ http_request() {
     local curl_exit=0
     
     while [ $retry_count -lt $MAX_RETRIES ]; do
+        # Clean up any trailing whitespace or invisible characters from URL
+        url=$(echo "$url" | sed 's/[[:space:]]*$//')
         log INFO "HTTP $method request to: $url (attempt $((retry_count + 1))/$MAX_RETRIES)"
         
         # Build curl command
@@ -364,9 +381,23 @@ http_request() {
         local http_code
         local response
         
+        # Debug: Show the actual curl command in verbose mode
+        if [ "$VERBOSE_MODE" = "true" ]; then
+            log INFO "Executing: $curl_cmd '$url'"
+        fi
+        
         if [ -n "$output_file" ]; then
-            http_code=$(eval "$curl_cmd --write-out '%{http_code}' '$url'" 2>&1)
-            curl_exit=$?
+            # When downloading to file with verbose mode, capture just the HTTP code
+            if [ "$VERBOSE_MODE" = "true" ]; then
+                # Run curl and capture both output and exit code
+                eval "$curl_cmd '$url'" 2>&1
+                curl_exit=$?
+                # Get HTTP code with a separate non-verbose call
+                http_code=$(curl --silent --head --location --max-time 10 --write-out '%{http_code}' --output /dev/null "$url" 2>/dev/null || echo "000")
+            else
+                http_code=$(eval "$curl_cmd --write-out '%{http_code}' '$url'" 2>&1)
+                curl_exit=$?
+            fi
         else
             response=$(eval "$curl_cmd --write-out '\n%{http_code}' '$url'" 2>&1)
             curl_exit=$?
@@ -385,6 +416,20 @@ http_request() {
         
         # Handle errors
         log ERROR "Request failed (curl exit: $curl_exit, HTTP: $http_code)"
+        
+        # Show more details about the error
+        if [ "$http_code" = "404" ]; then
+            log ERROR "404 Not Found - Check endpoint URL: $url"
+        elif [ "$http_code" = "401" ]; then
+            log ERROR "401 Unauthorized - Check API key"
+        elif [ "$http_code" = "403" ]; then
+            log ERROR "403 Forbidden - API key may not have permission"
+        fi
+        
+        # In verbose mode, show the response for debugging (only if response is set)
+        if [ "$VERBOSE_MODE" = "true" ] && [ -n "${response:-}" ]; then
+            log ERROR "Response: $(echo "$response" | head -100)"
+        fi
         
         # Clean up failed download
         if [ -n "$output_file" ] && [ -f "$output_file" ]; then
@@ -407,9 +452,12 @@ http_request() {
 # Get list of available databases from API
 get_database_list() {
     log INFO "Fetching available databases from API..."
+    log INFO "API Endpoint: $API_ENDPOINT"
+    log INFO "Using API Key: $(echo "$API_KEY" | sed 's/\(.\{4\}\).*/\1.../')"
     
+    # Note: The API endpoint should not have /databases appended - it's already complete
     local response
-    response=$(http_request "$API_ENDPOINT/databases" "POST") || return 1
+    response=$(http_request "$API_ENDPOINT" "POST") || return 1
     
     # Parse JSON response to extract database URLs
     # This is a simple parser that works with the expected format
@@ -476,20 +524,16 @@ download_databases() {
         for requested_db in $DATABASES; do
             requested_db=$(echo "$requested_db" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             
-            # Check if this database is in the list
-            local found=false
-            echo "$urls" | while IFS='|' read -r db_name url; do
-                if [ "$db_name" = "$requested_db" ]; then
-                    if [ -n "$filtered_urls" ]; then
-                        filtered_urls="$filtered_urls\n"
-                    fi
-                    filtered_urls="$filtered_urls${db_name}|${url}"
-                    found=true
-                    break
-                fi
-            done
+            # Check if this database is in the list (use grep to avoid subshell issue)
+            local db_line=$(echo "$urls" | grep "^${requested_db}|")
             
-            if [ "$found" = "false" ]; then
+            if [ -n "$db_line" ]; then
+                if [ -n "$filtered_urls" ]; then
+                    filtered_urls=$(printf "%s\n%s" "$filtered_urls" "$db_line")
+                else
+                    filtered_urls="$db_line"
+                fi
+            else
                 log WARNING "Requested database not available: $requested_db"
             fi
         done
@@ -632,21 +676,19 @@ validate_databases() {
     local valid=0
     local invalid=0
     
-    # Check for any database files
+    # Check for any database files (use find to properly handle glob patterns)
     local found_files=false
-    for pattern in "*.mmdb" "*.MMDB" "*.BIN" "*.bin"; do
-        for db_file in "$TARGET_DIR"/$pattern; do
-            if [ -f "$db_file" ]; then
-                found_files=true
-                total=$((total + 1))
-                
-                if validate_database "$db_file"; then
-                    valid=$((valid + 1))
-                else
-                    invalid=$((invalid + 1))
-                fi
-            fi
-        done
+    
+    # Find all database files
+    for db_file in $(find "$TARGET_DIR" -maxdepth 1 -type f \( -name "*.mmdb" -o -name "*.MMDB" -o -name "*.BIN" -o -name "*.bin" \) 2>/dev/null); do
+        found_files=true
+        total=$((total + 1))
+        
+        if validate_database "$db_file"; then
+            valid=$((valid + 1))
+        else
+            invalid=$((invalid + 1))
+        fi
     done
     
     if [ "$found_files" = "false" ]; then
