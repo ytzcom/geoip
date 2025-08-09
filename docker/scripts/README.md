@@ -4,16 +4,50 @@ This directory contains the scripts-only Docker image for easy GeoIP integration
 
 ## 📦 What's Included
 
+- **geoip-update-amd64** - Pre-compiled Go binary for AMD64/x86_64 (fastest option)
+- **geoip-update-arm64** - Pre-compiled Go binary for ARM64/aarch64 (fastest option)
 - **geoip-update-posix.sh** - POSIX-compliant script (works on Alpine/ash/dash)
 - **geoip-update.sh** - Full-featured bash script (requires bash)
-- **geoip-update.py** - Python validation script (optional)
-- **entrypoint-helper.sh** - Docker entrypoint helper functions
+- **geoip-update.py** - Python async script (requires Python 3.7+ and aiohttp)
+- **geoip-update.ps1** - PowerShell script (for Windows containers)
+- **entrypoint-helper.sh** - Smart Docker entrypoint helper with auto-detection
 - **setup-cron.sh** - Multi-system cron configuration
 - **validate.sh** - Basic validation without Python
 
+## 🧠 Smart Script Selection
+
+The helper automatically detects your system architecture and environment, then selects the best available script:
+
+### Architecture Detection
+- **AMD64/x86_64**: Uses `geoip-update-amd64` binary
+- **ARM64/aarch64**: Uses `geoip-update-arm64` binary
+- **Other architectures**: Falls back to shell scripts
+
+### Priority Order
+1. **Go binary** (architecture-specific) - Fastest, self-contained, ~5MB
+2. **Python** (if Python + aiohttp available) - Async, parallel downloads
+3. **Bash** (if bash available) - Full features, widely compatible
+4. **PowerShell** (if pwsh available) - Windows containers
+5. **POSIX** (fallback) - Maximum compatibility
+
+You can override auto-detection by setting `GEOIP_SCRIPT_TYPE`:
+```bash
+# Force a specific script type
+export GEOIP_SCRIPT_TYPE=python  # Options: auto, bash, posix, python, powershell, go
+```
+
 ## 🐧 Alpine Linux Compatibility
 
-The image now includes a POSIX-compliant version that works perfectly on Alpine Linux and other minimal shells without requiring bash. The helper automatically detects and uses the appropriate script.
+The image includes a POSIX-compliant version that works perfectly on Alpine Linux and other minimal shells without requiring bash. The helper automatically detects Alpine environments and uses the appropriate script.
+
+## 📊 Image Size
+
+The scripts-only image is ultra-minimal:
+- Base scripts: ~200KB
+- Go binaries: ~5MB each (AMD64 + ARM64 = ~10MB total)
+- **Total image size: ~10.2MB**
+
+Both Go binaries are included to ensure optimal performance on any architecture. The appropriate binary is automatically selected at runtime.
 
 ## 🚀 Quick Start
 
@@ -115,6 +149,9 @@ When you source `entrypoint-helper.sh`, these functions become available:
 - **`GEOIP_ENABLED`** - Enable/disable GeoIP functionality (default: `true`)
 - **`GEOIP_TARGET_DIR`** - Where to store databases (default: `/app/resources/geoip`)
 - **`GEOIP_API_ENDPOINT`** - API endpoint URL (default: `https://geoipdb.net/auth`)
+  - Note: Scripts auto-append `/auth` if you provide just `https://geoipdb.net`
+- **`GEOIP_SCRIPT_TYPE`** - Force specific script type (default: `auto`)
+  - Options: `auto`, `bash`, `posix`, `python`, `powershell`, `go`
 - **`GEOIP_DOWNLOAD_ON_START`** - Download on container start (default: `true`)
 - **`GEOIP_VALIDATE_ON_START`** - Validate on start (default: `true`)
 - **`GEOIP_SETUP_CRON`** - Setup automatic updates (default: `true`)

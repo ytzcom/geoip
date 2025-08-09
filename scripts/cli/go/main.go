@@ -597,6 +597,15 @@ func parseFlags() (*Config, error) {
 	// Convert timeout to duration
 	config.Timeout = time.Duration(*timeout) * time.Second
 
+	// Clean and normalize the API endpoint
+	config.APIEndpoint = strings.TrimRight(config.APIEndpoint, "/ \t\n\r")
+	
+	// Auto-append /auth if it's the base geoipdb.net domain
+	if config.APIEndpoint == "https://geoipdb.net" || config.APIEndpoint == "http://geoipdb.net" {
+		config.APIEndpoint = config.APIEndpoint + "/auth"
+		log.Printf("Info: Appended /auth to endpoint: %s\n", config.APIEndpoint)
+	}
+
 	// Validate configuration
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("API key not provided. Use --api-key or set GEOIP_API_KEY")

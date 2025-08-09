@@ -191,6 +191,25 @@ validate_config() {
         error "API endpoint not configured"
     fi
     
+    # Clean and normalize the endpoint
+    # Remove trailing slashes and whitespace
+    API_ENDPOINT=$(echo "$API_ENDPOINT" | sed 's|/*$||' | sed 's/[[:space:]]*$//')
+    
+    # Auto-append /auth if it's the base geoipdb.net domain without path
+    case "$API_ENDPOINT" in
+        */auth)
+            # Already has /auth, keep as is
+            ;;
+        https://geoipdb.net|http://geoipdb.net)
+            # Base domain without /auth, append it
+            API_ENDPOINT="${API_ENDPOINT}/auth"
+            log INFO "Appended /auth to endpoint: $API_ENDPOINT"
+            ;;
+        *)
+            # Custom endpoint or already has a different path, keep as is
+            ;;
+    esac
+    
     # Log endpoint being used (helpful for debugging)
     if [[ "$API_ENDPOINT" =~ ^http://localhost|^http://127\.0\.0\.1 ]]; then
         log INFO "Using local API endpoint: $API_ENDPOINT"
