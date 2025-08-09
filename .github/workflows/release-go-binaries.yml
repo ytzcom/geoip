@@ -84,16 +84,17 @@ jobs:
         run: |
           cd cli/go
           
-          # Set build flags
-          BUILD_FLAGS='-ldflags="-s -w -X main.version=${{ steps.version.outputs.version }}" -trimpath'
-          
-          # Build the binary
+          # Build the binary (flags inline to avoid shell expansion issues)
           echo "Building for ${{ matrix.os }}/${{ matrix.arch }}..."
           if [ -n "${{ matrix.arm }}" ]; then
             echo "  ARM version: ${{ matrix.arm }}"
           fi
           
-          go build -o ../../${{ matrix.output }} $BUILD_FLAGS .
+          go build \
+            -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }}" \
+            -trimpath \
+            -o ../../${{ matrix.output }} \
+            .
           
           # Make executable (except Windows)
           if [ "${{ matrix.os }}" != "windows" ]; then
