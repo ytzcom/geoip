@@ -86,14 +86,14 @@ jobs:
             category: cli
             
           - name: geoip-updater-cron
-            context: ./cli/python-cron
-            dockerfile: Dockerfile
+            context: ./cli
+            dockerfile: python-cron/Dockerfile
             description: "GeoIP database updater - Secure Cron with supercronic"
             category: cli
             
           - name: geoip-updater-k8s
-            context: ./cli/python-k8s
-            dockerfile: Dockerfile
+            context: ./cli
+            dockerfile: python-k8s/Dockerfile
             description: "GeoIP database updater - Kubernetes optimized"
             category: cli
             
@@ -158,14 +158,20 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}
+          # Optimized tagging strategy to reduce Docker Hub storage:
+          # - Removed SHA tags (main-abc123f) that create the most clutter
+          # - Added explicit PR prefix for better organization 
+          # - Added explicit develop tag for development branch
+          # - Kept semantic versioning for releases (v1.0.0, 1.0, 1)
+          # - Kept branch and latest tags for core functionality
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
+            type=ref,event=pr,prefix=pr-
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha,prefix={{branch}}-,format=short
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.name }}
             org.opencontainers.image.description=${{ matrix.description }}
@@ -411,6 +417,12 @@ jobs:
           echo "**Workflow Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered by**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Actor**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧹 Docker Hub Cleanup" >> $GITHUB_STEP_SUMMARY
+          echo "Automatic cleanup runs weekly to remove old PR and SHA tags." >> $GITHUB_STEP_SUMMARY
+          echo "- **Next Cleanup**: Every Sunday at 2:00 AM UTC" >> $GITHUB_STEP_SUMMARY
+          echo "- **Manual Trigger**: [Docker Hub Cleanup Workflow](${{ github.server_url }}/${{ github.repository }}/actions/workflows/docker-cleanup.yml)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Documentation**: [Cleanup Configuration](docs/DOCKER_CLEANUP.md)" >> $GITHUB_STEP_SUMMARY
           
       - name: Send notification
         run: |

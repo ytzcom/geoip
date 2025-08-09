@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 WORKDIR /build
-COPY requirements.txt .
+COPY ../python/requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
 # Runtime stage
@@ -42,10 +42,10 @@ COPY --from=builder /root/.local /home/geoip/.local
 
 # Copy application
 WORKDIR /app
-COPY geoip-update.py .
+COPY ../python/geoip-update.py .
 
 # Copy secure entrypoint script
-COPY entrypoint.sh /entrypoint.sh
+COPY python-cron/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Create directories with proper ownership

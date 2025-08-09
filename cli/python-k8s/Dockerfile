@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy and install Python dependencies
 WORKDIR /build
-COPY requirements.txt .
+COPY ../python/requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
 # Runtime stage
@@ -31,7 +31,7 @@ COPY --from=builder /root/.local /home/geoip/.local
 
 # Copy application
 WORKDIR /app
-COPY --chown=geoip:0 geoip-update.py .
+COPY --chown=geoip:0 ../python/geoip-update.py .
 
 # Switch to non-root user
 USER 1000

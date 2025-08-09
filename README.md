@@ -169,6 +169,7 @@ CMD sh -c '. /opt/geoip/entrypoint-helper.sh && geoip_init && node server.js'
 - **[Security Guide](docs/SECURITY.md)** - Security best practices
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Notifications](docs/NOTIFICATIONS.md)** - Alerts and monitoring setup
+- **[Docker Hub Cleanup](docs/DOCKER_CLEANUP.md)** - Automated image cleanup and retention
 
 ## 🤝 Contributing
 
