@@ -42,6 +42,28 @@ Automated Docker image building and publishing to Docker Hub.
 - Automated Docker Hub description updates
 - Build caching for faster builds
 
+### release-go-binaries.yml
+Build and release Go binaries for multiple platforms.
+
+**Triggers:**
+- Git tags (v*, go-v*)
+- Manual dispatch with version input
+
+**Platforms:**
+- Linux (amd64, arm64, arm/v7)
+- macOS (amd64, arm64)
+- Windows (amd64, arm64)
+- FreeBSD (amd64)
+
+**Features:**
+- Cross-platform compilation
+- Automatic GitHub release creation
+- Checksum generation (SHA256, MD5)
+- Binary compression (.gz, .tar.gz)
+- Post-release testing on major platforms
+
+See [RELEASE.md](RELEASE.md) for detailed release process.
+
 ## Required Secrets
 
 ### For update-geoip.yml:
