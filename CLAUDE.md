@@ -20,8 +20,11 @@ This is an automated GeoIP database updater that downloads MaxMind and IP2Locati
 # Extract databases
 ./github-actions/extract-databases.sh
 
-# Validate databases
+# Validate databases (legacy method)
 python github-actions/validate-databases.py temp/raw/
+
+# Enhanced validation with CLI scripts
+./cli/geoip-update.sh --validate-only --directory temp/raw/ --verbose
 ```
 
 ### Testing S3 Uploads
@@ -47,6 +50,29 @@ export IP2LOCATION_TOKEN=your-token
 export S3_BUCKET=your-bucket-name
 ```
 
+### Testing Database Validation
+
+All CLI scripts support comprehensive validation of database files:
+
+```bash
+# Validate existing database files (no API key required)
+./cli/geoip-update.sh --validate-only --directory /path/to/geoip --verbose
+./cli/geoip-update-posix.sh --validate-only --directory /path/to/geoip
+./cli/python/geoip-update.py --validate-only --directory /path/to/geoip
+
+# Validate database names with API (requires API key)
+./cli/geoip-update.sh --check-names --databases "city,country,isp" --api-key YOUR_KEY
+
+# Docker validation
+./docker-scripts/validate.sh --directory /path/to/geoip --verbose
+```
+
+**Key validation features:**
+- **MMDB validation**: Uses reliable binary pattern matching for MaxMind metadata marker
+- **BIN validation**: Verifies IP2Location binary format and content
+- **Cross-platform**: Works on Linux, macOS, Windows with multiple fallback methods
+- **Exit codes**: 0=success, 1=validation failed, 2=invalid arguments
+
 ## Architecture Overview
 
 ### Workflow Pipeline
@@ -63,6 +89,7 @@ export S3_BUCKET=your-bucket-name
 - **Cross-Platform Compatibility**: Uses `wc -c` instead of `stat` for file size checks to work on both Linux and macOS
 - **Configurable S3 Bucket**: The S3 bucket name can be customized via the `S3_BUCKET` secret (defaults to 'ytz-geoip')
 - **CIDR Databases Excluded**: Only BIN and MMDB formats are supported; CSV/CIDR databases were removed as they're not needed
+- **Enhanced Validation**: All CLI scripts include `--validate-only` flag for comprehensive database validation using reliable binary pattern matching for MMDB files
 
 ### Script Dependencies
 

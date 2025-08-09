@@ -107,6 +107,8 @@ export GEOIP_DATABASES="all"  # or "city,country" for specific ones
 | Quiet | `-q`, `--quiet` | `-Quiet` | `-q`, `--quiet` | Silent mode for automation |
 | Verbose | `-v`, `--verbose` | `-Verbose` | `-v`, `--verbose` | Detailed output |
 | Log File | `-l`, `--log-file` | `-LogFile` | `-l`, `--log-file` | Log to file |
+| **Validate Only** | `-V`, `--validate-only` | `-ValidateOnly` | `--validate-only` | **Validate existing files without downloading** |
+| **Check Names** | `-C`, `--check-names` | `-CheckNames` | `--check-names` | **Validate database names with API** |
 
 ## 📋 Database Selection
 
@@ -136,6 +138,75 @@ All tools support flexible database selection:
 - `px2` → `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN`
 - `db23-ipv4` → IPv4 comprehensive database
 - `db23-ipv6` → IPv6 comprehensive database
+
+## ✅ Database Validation
+
+All CLI tools include comprehensive validation capabilities for both file integrity and database name validation.
+
+### File Validation (`--validate-only`)
+
+Validates existing database files without downloading:
+
+```bash
+# Validate all databases in default directory
+./geoip-update.sh --validate-only
+
+# Validate databases in specific directory
+./geoip-update.sh --validate-only --directory /var/lib/geoip
+
+# Validate with verbose output
+./geoip-update.sh --validate-only --verbose
+
+# PowerShell equivalent
+.\geoip-update.ps1 -ValidateOnly -TargetDirectory "C:\GeoIP"
+
+# Python equivalent
+python geoip-update.py --validate-only --directory /data/geoip
+```
+
+**What gets validated:**
+- **MMDB files**: MaxMind metadata marker validation using reliable binary pattern matching
+- **BIN files**: IP2Location format validation and binary data verification
+- **File sizes**: Ensures files aren't error pages or corrupted downloads
+- **File integrity**: Cross-platform validation with multiple fallback methods
+
+### Name Validation (`--check-names`)
+
+Validates database names with the API before downloading:
+
+```bash
+# Check if database names are valid
+./geoip-update.sh --check-names --databases "city,country,isp" --api-key YOUR_KEY
+
+# Check all databases
+./geoip-update.sh --check-names --databases "all" --api-key YOUR_KEY
+
+# Check specific database combinations
+./geoip-update.sh --check-names --databases "GeoIP2-City.mmdb,IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN" --api-key YOUR_KEY
+```
+
+**What gets validated:**
+- Database name resolution against API
+- Alias expansion (e.g., "city" → "GeoIP2-City.mmdb")
+- Provider-specific selections (e.g., "maxmind/all")
+- Shows resolved database list before download
+
+### Docker Validation
+
+```bash
+# Validate databases in Docker container
+docker run --rm -v /data:/data ytzcom/geoip-updater --validate-only
+
+# Validate specific directory
+docker run --rm -v /path/to/geoip:/geoip ytzcom/geoip-updater --validate-only --directory /geoip
+```
+
+### Exit Codes
+
+All validation commands return appropriate exit codes:
+- `0` - All validations passed
+- `1` - One or more validations failed
+- `2` - Invalid arguments or configuration
 
 ## 🔄 Scheduling Updates
 
@@ -211,11 +282,24 @@ sudo chown -R $USER:$USER /var/lib/geoip
 
 **API Authentication Failed**
 ```bash
-# Test API key
-./geoip-update.sh --test-connection
+# Test database name validation (requires API key)
+./geoip-update.sh --check-names --databases "all" --api-key your-key
 
-# Check API endpoint
+# Check API endpoint manually
 curl -H "X-API-Key: your-key" https://geoipdb.net/auth
+```
+
+**Database Validation Errors**
+```bash
+# Validate existing databases
+./geoip-update.sh --validate-only --verbose
+
+# Check specific directory
+./geoip-update.sh --validate-only --directory /path/to/geoip
+
+# Force redownload if validation fails
+rm /path/to/geoip/*.mmdb /path/to/geoip/*.BIN
+./geoip-update.sh --api-key your-key
 ```
 
 **Lock File Issues**

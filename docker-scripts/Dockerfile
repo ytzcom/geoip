@@ -34,9 +34,9 @@ WORKDIR /opt/geoip
 # Copy existing CLI scripts (DRY - reuse these!)
 COPY cli/geoip-update.sh .
 COPY cli/geoip-update-posix.sh .
-COPY cli/geoip-update.py .
+COPY cli/python/geoip-update.py .
 COPY cli/geoip-update.ps1 .
-COPY cli/requirements.txt .
+COPY cli/python/requirements.txt .
 
 # Add new helper scripts that WRAP the existing ones
 COPY docker-scripts/entrypoint-helper.sh .
