@@ -21,18 +21,53 @@ docker run --rm \
 - **Platform**: Linux, macOS, BSD
 - **Requirements**: bash, curl, jq
 - **Scheduler**: cron, systemd timers
+- **Features**: Database discovery, smart selection, aliases support
 
 ### PowerShell Script (`geoip-update.ps1`)
 - **Platform**: Windows
 - **Requirements**: PowerShell 5.1+
 - **Scheduler**: Windows Task Scheduler
-- **Features**: Windows Credential Manager integration, progress bars
+- **Features**: Windows Credential Manager integration, progress bars, database discovery
 
 ### Python Script (`geoip-update.py`)
 - **Platform**: Cross-platform (Windows, Linux, macOS)
 - **Requirements**: Python 3.7+, pip packages (see requirements.txt)
 - **Scheduler**: Any (cron, Task Scheduler, systemd)
-- **Features**: Async downloads, YAML config support
+- **Features**: Async downloads, YAML config support, database discovery
+
+### Go Binary (`geoip-updater`)
+- **Platform**: Cross-platform (compilable for any OS/architecture)
+- **Requirements**: None (self-contained binary)
+- **Scheduler**: Any (cron, Task Scheduler, systemd)
+- **Features**: High performance, database discovery, smart selection
+
+## Database Aliases and Smart Selection
+
+All scripts support intelligent database selection with these features:
+
+### Available Aliases
+
+**MaxMind Databases:**
+- `city` → GeoIP2-City.mmdb
+- `country` → GeoIP2-Country.mmdb
+- `isp` → GeoIP2-ISP.mmdb
+- `connection` → GeoIP2-Connection-Type.mmdb
+
+**IP2Location Databases:**
+- `db23` → IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN
+- `db23v6` → IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN
+- `px2` → IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN
+
+### Bulk Selection Options
+- `all` - Download all available databases
+- `maxmind/all` - Download all MaxMind databases
+- `ip2location/all` - Download all IP2Location databases
+
+### Smart Features
+- **Case-insensitive**: Use `CITY`, `City`, or `city`
+- **Extension optional**: Both `city` and `city.mmdb` work
+- **Mix and match**: Combine aliases with full names
+- **Validation**: Test database names before downloading
 
 ## Initial Setup
 
@@ -78,6 +113,58 @@ pip install -r requirements.txt
 pip install aiohttp pyyaml click
 ```
 
+## Database Discovery and Smart Selection
+
+All CLI scripts now support intelligent database discovery and selection:
+
+### List Available Databases
+
+```bash
+# Bash
+./geoip-update.sh --list-databases
+
+# PowerShell
+.\geoip-update.ps1 -ListDatabases
+
+# Python
+python geoip-update.py --list-databases
+
+# Go
+./geoip-updater --list-databases
+```
+
+### Show Usage Examples
+
+```bash
+# Bash
+./geoip-update.sh --show-examples
+
+# PowerShell
+.\geoip-update.ps1 -ShowExamples
+
+# Python
+python geoip-update.py --show-examples
+
+# Go
+./geoip-updater --show-examples
+```
+
+### Validate Database Names
+
+```bash
+# Bash
+./geoip-update.sh -k YOUR_API_KEY --validate-only -b "city,isp"
+
+# PowerShell
+.\geoip-update.ps1 -ApiKey YOUR_API_KEY -ValidateOnly -Databases @("city", "isp")
+
+# Python
+python geoip-update.py --api-key YOUR_API_KEY --validate-only --databases city --databases isp
+
+# Go
+./geoip-updater --api-key YOUR_API_KEY --validate-only --databases "city,isp"
+```
+
 ## Usage Examples
 
 ### Basic Usage
@@ -91,6 +178,9 @@ pip install aiohttp pyyaml click
 
 # Python
 python geoip-update.py --api-key YOUR_API_KEY
+
+# Go
+./geoip-updater --api-key YOUR_API_KEY
 ```
 
 ### Using Environment Variables
@@ -106,14 +196,20 @@ export GEOIP_TARGET_DIR="/var/lib/geoip"
 ### Download Specific Databases
 
 ```bash
-# Bash
+# Using full database names
 ./geoip-update.sh -k YOUR_API_KEY -b "GeoIP2-City.mmdb,GeoIP2-Country.mmdb"
 
-# PowerShell
-.\geoip-update.ps1 -ApiKey YOUR_API_KEY -Databases @("GeoIP2-City.mmdb", "GeoIP2-Country.mmdb")
+# Using aliases (case-insensitive)
+./geoip-update.sh -k YOUR_API_KEY -b "city,country"
 
-# Python
-python geoip-update.py --api-key YOUR_API_KEY --databases GeoIP2-City.mmdb --databases GeoIP2-Country.mmdb
+# Bulk selection - all MaxMind databases
+./geoip-update.sh -k YOUR_API_KEY -b "maxmind/all"
+
+# Bulk selection - all IP2Location databases
+python geoip-update.py --api-key YOUR_API_KEY --databases ip2location/all
+
+# Mixed aliases and full names
+.\geoip-update.ps1 -ApiKey YOUR_API_KEY -Databases @("city", "ISP", "px2")
 ```
 
 ### Quiet Mode for Schedulers

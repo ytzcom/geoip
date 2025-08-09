@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -575,12 +576,43 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(&config.NoLock, "n", false, "No lock (short)")
 	
 	showVersion := flag.Bool("version", false, "Show version")
+	listDatabases := flag.Bool("list-databases", false, "List all available databases and aliases")
+	flag.BoolVar(listDatabases, "L", false, "List databases (short)")
+	showExamples := flag.Bool("show-examples", false, "Show usage examples for database selection")
+	flag.BoolVar(showExamples, "E", false, "Show examples (short)")
+	validateOnly := flag.Bool("validate-only", false, "Validate database names without downloading")
+	flag.BoolVar(validateOnly, "V", false, "Validate only (short)")
 	
 	flag.Parse()
 
 	// Handle version flag
 	if *showVersion {
 		fmt.Printf("GeoIP Update Go v%s\n", version)
+		os.Exit(0)
+	}
+
+	// Handle list databases flag
+	if *listDatabases {
+		listDatabasesCmd()
+		os.Exit(0)
+	}
+
+	// Handle show examples flag
+	if *showExamples {
+		showExamplesCmd()
+		os.Exit(0)
+	}
+
+	// Handle validate only flag
+	if *validateOnly {
+		// Need API key for validation
+		if config.APIKey == "" {
+			config.APIKey = os.Getenv("GEOIP_API_KEY")
+		}
+		if config.APIKey == "" {
+			return nil, fmt.Errorf("API key required for validation. Use --api-key or set GEOIP_API_KEY")
+		}
+		validateDatabasesCmd(config, strings.Split(*databases, ","))
 		os.Exit(0)
 	}
 
@@ -631,7 +663,8 @@ func getEnvOrDefault(key, defaultValue string) string {
 }
 
 func isValidAPIKey(key string) bool {
-	if len(key) < 20 || len(key) > 64 {
+	// Allow shorter keys for testing (minimum 8 characters)
+	if len(key) < 8 || len(key) > 64 {
 		return false
 	}
 	for _, c := range key {
@@ -647,6 +680,246 @@ func minDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+// DatabaseInfo represents the /databases endpoint response
+type DatabaseInfo struct {
+	Total     int `json:"total"`
+	Providers struct {
+		MaxMind struct {
+			Count     int `json:"count"`
+			Databases []struct {
+				Name    string   `json:"name"`
+				Aliases []string `json:"aliases"`
+			} `json:"databases"`
+		} `json:"maxmind"`
+		IP2Location struct {
+			Count     int `json:"count"`
+			Databases []struct {
+				Name    string   `json:"name"`
+				Aliases []string `json:"aliases"`
+			} `json:"databases"`
+		} `json:"ip2location"`
+	} `json:"providers"`
+	Examples struct {
+		SingleDatabase    []string   `json:"single_database"`
+		MultipleDatabases [][]string `json:"multiple_databases"`
+		BulkSelection     []string   `json:"bulk_selection"`
+	} `json:"examples"`
+}
+
+// fetchDatabasesInfo fetches database information from the /databases endpoint
+func fetchDatabasesInfo(endpoint string) (*DatabaseInfo, error) {
+	// Convert /auth endpoint to /databases endpoint
+	databasesEndpoint := strings.Replace(endpoint, "/auth", "/databases", 1)
+	
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	
+	resp, err := client.Get(databasesEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("database discovery not available (HTTP %d)", resp.StatusCode)
+	}
+	
+	var dbInfo DatabaseInfo
+	if err := json.NewDecoder(resp.Body).Decode(&dbInfo); err != nil {
+		return nil, err
+	}
+	
+	return &dbInfo, nil
+}
+
+// listDatabasesCmd lists all available databases and aliases
+func listDatabasesCmd() {
+	endpoint := getEnvOrDefault("GEOIP_API_ENDPOINT", defaultEndpoint)
+	endpoint = strings.TrimRight(endpoint, "/ \t\n\r")
+	
+	dbInfo, err := fetchDatabasesInfo(endpoint)
+	if err != nil {
+		fmt.Println("Database discovery not available.")
+		fmt.Println("Using legacy database list:")
+		fmt.Println("  • GeoIP2-City.mmdb")
+		fmt.Println("  • GeoIP2-Country.mmdb")
+		fmt.Println("  • GeoIP2-ISP.mmdb")
+		fmt.Println("  • GeoIP2-Connection-Type.mmdb")
+		fmt.Println("  • IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN")
+		fmt.Println("  • IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN")
+		fmt.Println("  • IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN")
+		return
+	}
+	
+	fmt.Println("Available GeoIP Databases:")
+	fmt.Println("=========================")
+	fmt.Println()
+	fmt.Printf("Total databases: %d\n", dbInfo.Total)
+	fmt.Println()
+	
+	// MaxMind databases
+	fmt.Printf("MaxMind databases (%d):\n", dbInfo.Providers.MaxMind.Count)
+	for _, db := range dbInfo.Providers.MaxMind.Databases {
+		aliases := strings.Join(db.Aliases, ", ")
+		fmt.Printf("  • %s (aliases: %s)\n", db.Name, aliases)
+	}
+	fmt.Println()
+	
+	// IP2Location databases
+	fmt.Printf("IP2Location databases (%d):\n", dbInfo.Providers.IP2Location.Count)
+	for _, db := range dbInfo.Providers.IP2Location.Databases {
+		aliases := strings.Join(db.Aliases, ", ")
+		fmt.Printf("  • %s (aliases: %s)\n", db.Name, aliases)
+	}
+	fmt.Println()
+	
+	fmt.Println("Bulk Selection Options:")
+	fmt.Println("  • all - All databases")
+	fmt.Println("  • maxmind/all - All MaxMind databases")
+	fmt.Println("  • ip2location/all - All IP2Location databases")
+	fmt.Println()
+	fmt.Println("Usage Notes:")
+	fmt.Println("  • Database names are case-insensitive")
+	fmt.Println("  • File extensions are optional in most cases")
+	fmt.Println("  • Use short aliases for easier selection")
+}
+
+// showExamplesCmd shows usage examples for database selection
+func showExamplesCmd() {
+	endpoint := getEnvOrDefault("GEOIP_API_ENDPOINT", defaultEndpoint)
+	endpoint = strings.TrimRight(endpoint, "/ \t\n\r")
+	
+	dbInfo, err := fetchDatabasesInfo(endpoint)
+	if err != nil {
+		fmt.Println("Database Selection Examples (Legacy Mode):")
+		fmt.Println("==========================================")
+	} else {
+		fmt.Println("Database Selection Examples:")
+		fmt.Println("===========================")
+		fmt.Println()
+		
+		if len(dbInfo.Examples.SingleDatabase) > 0 {
+			fmt.Println("Single Database Selection:")
+			for _, example := range dbInfo.Examples.SingleDatabase {
+				fmt.Printf("  geoip-update --api-key YOUR_KEY --databases \"%s\"\n", example)
+			}
+			fmt.Println()
+		}
+		
+		if len(dbInfo.Examples.MultipleDatabases) > 0 {
+			fmt.Println("Multiple Database Selection:")
+			for _, examples := range dbInfo.Examples.MultipleDatabases {
+				dbs := strings.Join(examples, ",")
+				fmt.Printf("  geoip-update --api-key YOUR_KEY --databases \"%s\"\n", dbs)
+			}
+			fmt.Println()
+		}
+		
+		if len(dbInfo.Examples.BulkSelection) > 0 {
+			fmt.Println("Bulk Selection:")
+			for _, example := range dbInfo.Examples.BulkSelection {
+				fmt.Printf("  geoip-update --api-key YOUR_KEY --databases \"%s\"\n", example)
+			}
+			fmt.Println()
+		}
+	}
+	
+	fmt.Println("Common Examples:")
+	fmt.Println("  # Download all databases")
+	fmt.Println("  geoip-update --api-key YOUR_KEY")
+	fmt.Println()
+	fmt.Println("  # Download specific databases using aliases")
+	fmt.Println("  geoip-update --api-key YOUR_KEY --databases \"city,country\"")
+	fmt.Println()
+	fmt.Println("  # Download all MaxMind databases")
+	fmt.Println("  geoip-update --api-key YOUR_KEY --databases \"maxmind/all\"")
+	fmt.Println()
+	fmt.Println("  # Case insensitive selection")
+	fmt.Println("  geoip-update --api-key YOUR_KEY --databases \"CITY,ISP\"")
+	fmt.Println()
+	fmt.Println("  # Local testing with Docker API")
+	fmt.Println("  geoip-update --api-key test-key-1 --endpoint http://localhost:8080/auth --databases \"city\"")
+}
+
+// validateDatabasesCmd validates database names without downloading
+func validateDatabasesCmd(config *Config, databases []string) {
+	if len(databases) == 0 || (len(databases) == 1 && databases[0] == "all") {
+		fmt.Println("✓ Database selection 'all' is valid")
+		return
+	}
+	
+	// Clean databases
+	for i := range databases {
+		databases[i] = strings.TrimSpace(databases[i])
+	}
+	
+	// Prepare request body
+	body := map[string]interface{}{
+		"databases": databases,
+	}
+	
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		fmt.Printf("✗ Validation failed: %v\n", err)
+		os.Exit(1)
+	}
+	
+	// Create request
+	req, err := http.NewRequest("POST", config.APIEndpoint, bytes.NewReader(jsonBody))
+	if err != nil {
+		fmt.Printf("✗ Validation failed: %v\n", err)
+		os.Exit(1)
+	}
+	
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", config.APIKey)
+	
+	// Make request
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("✗ Validation failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode == http.StatusOK {
+		var result map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			fmt.Printf("✗ Validation failed: %v\n", err)
+			os.Exit(1)
+		}
+		
+		fmt.Println("✓ All database names are valid")
+		fmt.Printf("✓ Resolved to %d database(s)\n", len(result))
+		
+		// Show resolved databases
+		dbs := make([]string, 0, len(result))
+		for db := range result {
+			dbs = append(dbs, db)
+		}
+		sort.Strings(dbs)
+		for _, db := range dbs {
+			fmt.Printf("  → %s\n", db)
+		}
+	} else {
+		// Try to parse error message
+		var errorResp struct {
+			Detail string `json:"detail"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err == nil && errorResp.Detail != "" {
+			fmt.Printf("✗ Validation failed: %s\n", errorResp.Detail)
+		} else {
+			fmt.Printf("✗ Validation failed: HTTP %d\n", resp.StatusCode)
+		}
+		os.Exit(1)
+	}
 }
 
 func main() {

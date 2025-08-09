@@ -574,6 +574,160 @@ def load_config_file(config_path: Path) -> dict:
         sys.exit(1)
 
 
+async def fetch_databases_info(config: Config) -> Optional[dict]:
+    """Fetch database information from the /databases endpoint."""
+    databases_endpoint = config.api_endpoint.replace('/auth', '/databases')
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                databases_endpoint,
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=config.verify_ssl
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.debug(f"Database discovery endpoint returned {response.status}")
+                    return None
+    except Exception as e:
+        logger.debug(f"Database discovery not available: {e}")
+        return None
+
+
+async def list_databases_command(config: Config):
+    """List all available databases and their aliases."""
+    db_info = await fetch_databases_info(config)
+    
+    if db_info:
+        print("Available GeoIP Databases:")
+        print("=========================")
+        print()
+        print(f"Total databases: {db_info['total']}")
+        print()
+        
+        # MaxMind databases
+        maxmind = db_info['providers']['maxmind']
+        print(f"MaxMind databases ({maxmind['count']}):")
+        for db in maxmind['databases']:
+            aliases = ', '.join(db['aliases'])
+            print(f"  • {db['name']} (aliases: {aliases})")
+        print()
+        
+        # IP2Location databases
+        ip2location = db_info['providers']['ip2location']
+        print(f"IP2Location databases ({ip2location['count']}):")
+        for db in ip2location['databases']:
+            aliases = ', '.join(db['aliases'])
+            print(f"  • {db['name']} (aliases: {aliases})")
+        print()
+        
+        print("Bulk Selection Options:")
+        print("  • all - All databases")
+        print("  • maxmind/all - All MaxMind databases")
+        print("  • ip2location/all - All IP2Location databases")
+        print()
+        print("Usage Notes:")
+        print("  • Database names are case-insensitive")
+        print("  • File extensions are optional in most cases")
+        print("  • Use short aliases for easier selection")
+    else:
+        print("Database discovery not available.")
+        print("Using legacy database list:")
+        print("  • GeoIP2-City.mmdb")
+        print("  • GeoIP2-Country.mmdb")
+        print("  • GeoIP2-ISP.mmdb")
+        print("  • GeoIP2-Connection-Type.mmdb")
+        print("  • IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN")
+        print("  • IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN")
+        print("  • IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN")
+
+
+async def show_examples_command(config: Config):
+    """Show usage examples for database selection."""
+    db_info = await fetch_databases_info(config)
+    
+    print("Database Selection Examples:")
+    print("===========================")
+    print()
+    
+    if db_info and 'examples' in db_info:
+        examples = db_info['examples']
+        
+        print("Single Database Selection:")
+        for example in examples.get('single_database', []):
+            print(f'  geoip-update --api-key YOUR_KEY --databases "{example}"')
+        print()
+        
+        print("Multiple Database Selection:")
+        for example in examples.get('multiple_databases', []):
+            dbs = ','.join(example)
+            print(f'  geoip-update --api-key YOUR_KEY --databases "{dbs}"')
+        print()
+        
+        print("Bulk Selection:")
+        for example in examples.get('bulk_selection', []):
+            print(f'  geoip-update --api-key YOUR_KEY --databases "{example}"')
+        print()
+    
+    print("Common Examples:")
+    print("  # Download all databases")
+    print("  geoip-update --api-key YOUR_KEY")
+    print()
+    print("  # Download specific databases using aliases")
+    print('  geoip-update --api-key YOUR_KEY --databases "city" --databases "country"')
+    print()
+    print("  # Download all MaxMind databases")
+    print('  geoip-update --api-key YOUR_KEY --databases "maxmind/all"')
+    print()
+    print("  # Case insensitive selection")
+    print('  geoip-update --api-key YOUR_KEY --databases "CITY" --databases "ISP"')
+    print()
+    print("  # Local testing with Docker API")
+    print('  geoip-update --api-key test-key-1 --endpoint http://localhost:8080/auth --databases "city"')
+
+
+async def validate_databases_command(config: Config):
+    """Validate database names without downloading."""
+    if not config.databases or config.databases == ['all']:
+        print("✓ Database selection 'all' is valid")
+        return
+    
+    # Prepare the request
+    data = {"databases": config.databases}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                config.api_endpoint,
+                json=data,
+                headers={'X-API-Key': config.api_key},
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=config.verify_ssl
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    db_count = len(result)
+                    print("✓ All database names are valid")
+                    print(f"✓ Resolved to {db_count} database(s)")
+                    
+                    # Show resolved databases
+                    for db_name in sorted(result.keys()):
+                        print(f"  → {db_name}")
+                else:
+                    error_text = await response.text()
+                    try:
+                        error_json = json.loads(error_text)
+                        error_msg = error_json.get('detail', error_text)
+                    except:
+                        error_msg = error_text
+                    print(f"✗ Validation failed: {error_msg}")
+                    sys.exit(1)
+    except Exception as e:
+        print(f"✗ Validation failed: {e}")
+        sys.exit(1)
+
+
 @click.command()
 @click.option('-k', '--api-key', help='API key (or use GEOIP_API_KEY env var)')
 @click.option('-e', '--endpoint', help='API endpoint URL')
@@ -588,9 +742,13 @@ def load_config_file(config_path: Path) -> dict:
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
 @click.option('--no-lock', is_flag=True, help="Don't use lock file")
 @click.option('--no-ssl-verify', is_flag=True, help="Don't verify SSL certificates (not recommended)")
+@click.option('--list-databases', is_flag=True, help='List all available databases and aliases')
+@click.option('--show-examples', is_flag=True, help='Show usage examples for database selection')
+@click.option('--validate-only', is_flag=True, help='Validate database names without downloading')
 @click.version_option(version='1.0.0')
 def main(api_key, endpoint, directory, databases, config, log_file, retries, 
-         timeout, concurrent, quiet, verbose, no_lock, no_ssl_verify):
+         timeout, concurrent, quiet, verbose, no_lock, no_ssl_verify,
+         list_databases, show_examples, validate_only):
     """Download GeoIP databases from authenticated API."""
     
     # Create default config
@@ -642,6 +800,22 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
     
     # Setup logging
     setup_logging(config_obj)
+    
+    # Handle special commands that don't require full configuration
+    if list_databases:
+        asyncio.run(list_databases_command(config_obj))
+        return
+    
+    if show_examples:
+        asyncio.run(show_examples_command(config_obj))
+        return
+    
+    if validate_only:
+        if not config_obj.api_key:
+            logger.error("API key required for validation. Use --api-key or set GEOIP_API_KEY")
+            sys.exit(1)
+        asyncio.run(validate_databases_command(config_obj))
+        return
     
     # Validate configuration
     if not config_obj.api_key:
