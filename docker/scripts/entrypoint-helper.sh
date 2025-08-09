@@ -86,8 +86,9 @@ geoip_download_databases() {
     # Ensure target directory exists
     mkdir -p "$GEOIP_TARGET_DIR" 2>/dev/null || true
     
-    # Build command arguments
-    local cmd_args="--api-key '$GEOIP_API_KEY' --directory '$GEOIP_TARGET_DIR' --endpoint '$GEOIP_API_ENDPOINT'"
+    # Build command arguments (clean trailing whitespace from endpoint)
+    local clean_endpoint=$(echo "$GEOIP_API_ENDPOINT" | sed 's/[[:space:]]*$//')
+    local cmd_args="--api-key '$GEOIP_API_KEY' --directory '$GEOIP_TARGET_DIR' --endpoint '$clean_endpoint'"
     
     if [ "$GEOIP_QUIET_MODE" = "true" ]; then
         cmd_args="$cmd_args --quiet"
