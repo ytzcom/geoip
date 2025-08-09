@@ -1,0 +1,149 @@
+name: Docker Hub Cleanup
+
+on:
+  schedule:
+    # Run every Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run mode (true = show what would be deleted, false = actually delete)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      retention_days_pr:
+        description: 'Days to keep PR tags'
+        required: false
+        default: '30'
+        type: string
+      retention_days_branch_sha:
+        description: 'Days to keep branch SHA tags'
+        required: false
+        default: '14'
+        type: string
+
+env:
+  DOCKER_REGISTRY: docker.io
+  DOCKER_NAMESPACE: ytzcom
+
+jobs:
+  cleanup-docker-images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - geoip-scripts
+          - geoip-updater
+          - geoip-updater-cron
+          - geoip-updater-k8s
+          - geoip-updater-go
+          - geoip-api
+          - geoip-api-nginx
+          - geoip-api-dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set cleanup parameters
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "dry_run=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
+            echo "pr_retention=${{ github.event.inputs.retention_days_pr }}" >> $GITHUB_OUTPUT
+            echo "sha_retention=${{ github.event.inputs.retention_days_branch_sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "dry_run=false" >> $GITHUB_OUTPUT
+            echo "pr_retention=30" >> $GITHUB_OUTPUT
+            echo "sha_retention=14" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate cleanup configuration
+        id: config
+        run: |
+          # Calculate cutoff dates
+          PR_CUTOFF=$(date -d "${{ steps.params.outputs.pr_retention }} days ago" +%Y-%m-%d)
+          SHA_CUTOFF=$(date -d "${{ steps.params.outputs.sha_retention }} days ago" +%Y-%m-%d)
+          
+          # Create JSON config for tag deletion
+          cat > cleanup_config.json << EOF
+          [
+            {
+              "tag_pattern": "^pr-[0-9]+$",
+              "cutoff_date": "${PR_CUTOFF}",
+              "description": "PR tags older than ${{ steps.params.outputs.pr_retention }} days"
+            },
+            {
+              "tag_pattern": "^(main|develop|master)-[a-f0-9]{7}$",
+              "cutoff_date": "${SHA_CUTOFF}",
+              "description": "Branch SHA tags older than ${{ steps.params.outputs.sha_retention }} days"
+            }
+          ]
+          EOF
+          
+          echo "Generated cleanup configuration:"
+          cat cleanup_config.json
+          
+          echo "config_file=cleanup_config.json" >> $GITHUB_OUTPUT
+
+      - name: Docker Hub Tag Cleanup
+        uses: joshbeard/docker-hub-tag-delete@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          repository: ${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}
+          tags_source: 'json'
+          tags_json: ${{ steps.config.outputs.config_file }}
+          dry_run: ${{ steps.params.outputs.dry_run }}
+          api_base_url: https://hub.docker.com/v2
+
+      - name: Cleanup summary
+        run: |
+          echo "## Cleanup Summary for ${{ matrix.image }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode**: ${{ steps.params.outputs.dry_run == 'true' && 'Dry Run (Preview)' || 'Live Deletion' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**PR Tags Retention**: ${{ steps.params.outputs.pr_retention }} days" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA Tags Retention**: ${{ steps.params.outputs.sha_retention }} days" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Protected Tags** (never deleted):" >> $GITHUB_STEP_SUMMARY
+          echo "- \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`main\`, \`develop\`, \`master\` (current branch tags)" >> $GITHUB_STEP_SUMMARY
+          echo "- Semantic version tags (\`v1.0.0\`, \`1.0\`, \`1\`)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the action logs above for details of what was ${{ steps.params.outputs.dry_run == 'true' && 'identified for deletion' || 'actually deleted' }}." >> $GITHUB_STEP_SUMMARY
+
+  cleanup-notification:
+    runs-on: ubuntu-latest
+    needs: cleanup-docker-images
+    if: always()
+    steps:
+      - name: Create final summary
+        run: |
+          echo "## Docker Hub Cleanup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.cleanup-docker-images.result }}" == "success" ]; then
+            echo "✅ **Status**: Cleanup completed successfully for all images" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Images Processed**:" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-scripts" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-updater (Python CLI)" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-updater-cron (Cron version)" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-updater-k8s (Kubernetes version)" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-updater-go (Go version)" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-api (FastAPI server)" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-api-nginx (Production with Nginx)" >> $GITHUB_STEP_SUMMARY
+            echo "- geoip-api-dev (Development version)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status**: Some cleanup jobs failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please check the individual job logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Run**: $(date -d '+7 days' '+%Y-%m-%d %H:%M UTC') (scheduled weekly)" >> $GITHUB_STEP_SUMMARY
+          echo "**Manual Trigger**: Use 'Run workflow' button for immediate cleanup or testing" >> $GITHUB_STEP_SUMMARY
