@@ -21,8 +21,10 @@ import (
 	"time"
 )
 
+// Version is injected at build time via -ldflags -X
+var version = "1.0.0"
+
 const (
-	version           = "1.0.0"
 	defaultEndpoint   = "https://geoipdb.net/auth"
 	defaultTargetDir  = "./geoip"
 	defaultRetries    = 3

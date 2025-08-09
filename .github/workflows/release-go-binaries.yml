@@ -85,7 +85,7 @@ jobs:
           cd cli/go
           
           # Set build flags
-          BUILD_FLAGS="-ldflags=\"-s -w -X main.version=${{ steps.version.outputs.version }}\" -trimpath"
+          BUILD_FLAGS="-ldflags='-s -w -X main.version=${{ steps.version.outputs.version }}' -trimpath"
           
           # Build the binary
           echo "Building for ${{ matrix.os }}/${{ matrix.arch }}..."
