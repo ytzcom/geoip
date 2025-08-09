@@ -62,7 +62,7 @@ jobs:
       - name: Generate cache key
         id: cache
         run: |
-          echo "key=docker-${{ runner.os }}-${{ hashFiles('cli/requirements.txt', 'cli/go/go.mod', 'api-server/requirements.txt') }}" >> $GITHUB_OUTPUT
+          echo "key=docker-${{ runner.os }}-${{ hashFiles('cli/python/requirements.txt', 'cli/go/go.mod', 'api-server/requirements.txt') }}" >> $GITHUB_OUTPUT
 
   build-matrix:
     runs-on: ubuntu-latest
@@ -80,26 +80,26 @@ jobs:
             
           # CLI Client Images
           - name: geoip-updater
-            context: ./cli
-            dockerfile: docker-images/cli/Dockerfile
+            context: ./cli/python
+            dockerfile: Dockerfile
             description: "GeoIP database updater - Python CLI"
             category: cli
             
           - name: geoip-updater-cron
-            context: ./cli
-            dockerfile: docker-images/cli/Dockerfile.cron-secure
+            context: ./cli/python-cron
+            dockerfile: Dockerfile
             description: "GeoIP database updater - Secure Cron with supercronic"
             category: cli
             
           - name: geoip-updater-k8s
-            context: ./cli
-            dockerfile: k8s/Dockerfile
+            context: ./cli/python-k8s
+            dockerfile: Dockerfile
             description: "GeoIP database updater - Kubernetes optimized"
             category: cli
             
           - name: geoip-updater-go
-            context: ./cli
-            dockerfile: docker-images/cli/Dockerfile.go
+            context: ./cli/go
+            dockerfile: Dockerfile
             description: "GeoIP database updater - Go binary"
             category: cli
 
@@ -171,7 +171,7 @@ jobs:
             org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.vendor=YTZ
             org.opencontainers.image.category=${{ matrix.category }}
-            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip-updater/blob/main/${{ matrix.category == 'api' && 'api-server' || 'cli' }}/README.md
+            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip-updater/blob/main/${{ matrix.category == 'api' && 'api-server' || matrix.category == 'scripts' && 'docker-scripts' || 'cli/python' }}/README.md
             maintainer=YTZ
 
       - name: Build and push Docker image
@@ -254,7 +254,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
           repository: ${{ env.DOCKER_NAMESPACE }}/geoip-updater
-          readme-filepath: ./cli/README.md
+          readme-filepath: ./cli/python/README.md
           short-description: "GeoIP database updater with support for MaxMind and IP2Location"
 
   sign-images:
