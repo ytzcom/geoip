@@ -1,10 +1,10 @@
-# Workflow Failure Notifications
+# Notifications Setup Guide
 
-This document explains how to configure notifications for the GeoIP Update workflow failures.
+This document explains how to configure notifications for the GeoIP Update system across different deployment methods including GitHub Actions workflows and CLI operations.
 
 ## Overview
 
-The GeoIP Update workflow includes built-in failure notifications that can alert you when database updates fail. This is especially important for scheduled runs that might fail silently without notifications.
+The GeoIP Update system provides multiple notification methods to alert you when database updates fail. This is especially important for scheduled runs (GitHub Actions every Monday at midnight UTC) and automated CLI deployments that might fail silently without proper alerting.
 
 ## Notification Methods
 
@@ -81,29 +81,85 @@ All notifications include:
 2. **GitHub Issues**: Useful for tracking recurring issues and maintaining a history
 3. **Both Methods**: Can be used together for comprehensive coverage
 
+### 4. CLI Tool Notifications
+
+For CLI deployments, configure system-level notifications:
+
+#### Email Notifications (Linux/macOS)
+```bash
+# Add to your cron job or script
+if ! ./geoip-update.sh -q; then
+    echo "GeoIP update failed on $(hostname)" | mail -s "GeoIP Update Failure" admin@company.com
+fi
+```
+
+#### System Logging
+```bash
+# Log to syslog
+logger -t geoip-update "Database update completed successfully"
+logger -p user.error -t geoip-update "Database update failed"
+```
+
+#### Docker Container Notifications
+```yaml
+# docker-compose.yml with health checks
+services:
+  geoip-updater:
+    image: ytzcom/geoip-updater-cron:latest
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/GeoIP2-City.mmdb"]
+      interval: 1h
+      timeout: 10s
+      retries: 3
+```
+
+## CLI Integration with External Systems
+
+### Webhook Notifications
+```bash
+# Add webhook call to your script
+if ! ./geoip-update.sh; then
+    curl -X POST https://hooks.slack.com/your-webhook \
+      -H "Content-Type: application/json" \
+      -d '{"text": "GeoIP update failed on production server"}'
+fi
+```
+
+### Monitoring System Integration
+```bash
+# Send metrics to monitoring system
+if ./geoip-update.sh; then
+    curl -X POST http://prometheus-pushgateway:9091/metrics/job/geoip_update \
+      -d 'geoip_update_success 1'
+else
+    curl -X POST http://prometheus-pushgateway:9091/metrics/job/geoip_update \
+      -d 'geoip_update_success 0'
+fi
+```
+
 ## Troubleshooting Common Failures
 
 When you receive a failure notification, check:
 
 1. **Authentication Failures**
-   - MaxMind credentials expired
-   - IP2Location token invalid
-   - AWS credentials misconfigured
+   - API key expired or invalid (https://geoipdb.net/auth)
+   - Network connectivity to authentication endpoint
+   - Firewall or proxy blocking HTTPS requests
 
 2. **Network Issues**
-   - Provider services down
-   - Rate limiting
-   - Connection timeouts
+   - S3 service availability
+   - Rate limiting from API endpoint
+   - Connection timeouts or DNS resolution
 
 3. **Storage Issues**
-   - S3 permissions
-   - Bucket accessibility
-   - Storage quotas
+   - Disk space availability
+   - File permissions for target directory
+   - Volume mount issues (Docker/Kubernetes)
 
 4. **Data Issues**
-   - Invalid database formats
-   - Corrupted downloads
+   - Database file corruption during download
    - Validation failures
+   - Unsupported database formats
 
 ## Testing Notifications
 
