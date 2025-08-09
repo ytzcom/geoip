@@ -476,6 +476,35 @@ validate_s3_url() {
     echo "$response" | grep -q '/download/'
 }
 
+validate_databases_response() {
+    local response="$1"
+    # Check for basic structure
+    echo "$response" | grep -q '"databases":' && \
+    echo "$response" | grep -q '"count":' && \
+    echo "$response" | grep -q '"metadata":' && \
+    # Check for specific databases
+    echo "$response" | grep -q 'GeoIP2-City.mmdb' && \
+    echo "$response" | grep -q 'GeoIP2-Country.mmdb' && \
+    # Check for aliases and examples
+    echo "$response" | grep -q '"aliases":' && \
+    echo "$response" | grep -q '"examples":'
+}
+
+validate_smart_selection_response() {
+    local response="$1"
+    # Should contain download URLs for resolved database names
+    echo "$response" | grep -q '"download_urls":' && \
+    echo "$response" | grep -q 'GeoIP2-City.mmdb'
+}
+
+validate_suggestion_response() {
+    local response="$1"
+    # Should contain error message with details
+    echo "$response" | grep -q '"detail":' && \
+    echo "$response" | grep -q 'Invalid database names' && \
+    echo "$response" | grep -q 'xyz123'
+}
+
 check_container_health() {
     log "Checking container health..."
     
@@ -718,6 +747,81 @@ if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "auth" ]]; then
         "GET" \
         "" \
         "-H 'X-API-Key: $API_KEY'"
+fi
+
+# --- Database Listing Tests ---
+if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "databases" ]]; then
+    log_category "Database Listing Tests"
+    
+    run_test "GET /databases (public endpoint)" \
+        "$API_URL/databases" \
+        "200" \
+        "GET" \
+        "" \
+        "" \
+        "true" \
+        "validate_databases_response"
+fi
+
+# --- Smart Database Selection Tests ---
+if [[ "$CATEGORY" == "all" ]] || [[ "$CATEGORY" == "smart-db" ]]; then
+    log_category "Smart Database Selection Tests"
+    
+    # Test case insensitive matching
+    run_test "POST /auth with case variations" \
+        "$API_URL/auth" \
+        "200" \
+        "POST" \
+        '{"databases": ["CITY", "country", "ISP"]}' \
+        "-H 'X-API-Key: $API_KEY' -H 'Content-Type: application/json'" \
+        "true" \
+        "validate_smart_selection_response"
+    
+    # Test aliases
+    run_test "POST /auth with aliases" \
+        "$API_URL/auth" \
+        "200" \
+        "POST" \
+        '{"databases": ["maxmind/city", "ip2location/proxy"]}' \
+        "-H 'X-API-Key: $API_KEY' -H 'Content-Type: application/json'" \
+        "true"
+    
+    # Test bulk selection
+    run_test "POST /auth with bulk selection (maxmind/all)" \
+        "$API_URL/auth" \
+        "200" \
+        "POST" \
+        '{"databases": ["maxmind/all"]}' \
+        "-H 'X-API-Key: $API_KEY' -H 'Content-Type: application/json'" \
+        "true"
+    
+    # Test mixed case bulk selection
+    run_test "POST /auth with case insensitive bulk (MAXMIND/ALL)" \
+        "$API_URL/auth" \
+        "200" \
+        "POST" \
+        '{"databases": ["MAXMIND/ALL"]}' \
+        "-H 'X-API-Key: $API_KEY' -H 'Content-Type: application/json'" \
+        "true"
+    
+    # Test extension optional
+    run_test "POST /auth without file extensions" \
+        "$API_URL/auth" \
+        "200" \
+        "POST" \
+        '{"databases": ["GeoIP2-City", "GeoIP2-ISP"]}' \
+        "-H 'X-API-Key: $API_KEY' -H 'Content-Type: application/json'" \
+        "true"
+    
+    # Test error suggestions
+    run_test "POST /auth with typo (should suggest)" \
+        "$API_URL/auth" \
+        "400" \
+        "POST" \
+        '{"databases": ["xyz123"]}' \
+        "-H 'X-API-Key: $API_KEY' -H 'Content-Type: application/json'" \
+        "true" \
+        "validate_suggestion_response"
 fi
 
 # --- GeoIP Query Tests ---
