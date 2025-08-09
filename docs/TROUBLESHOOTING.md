@@ -42,7 +42,7 @@ tail -f /var/log/geoip-update.log | grep -E "(download|progress|complete)"
 1. **Verify API Key Format**:
    ```bash
    # Check if key is properly set
-   echo "API Key length: ${#GEOIP_API_KEY}"
+   [ -n "$GEOIP_API_KEY" ] && echo "API key is configured (${#GEOIP_API_KEY} chars)" || echo "API key is not set"
    # Should be 32+ characters
    ```
 

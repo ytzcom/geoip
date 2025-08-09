@@ -248,10 +248,10 @@ if [ "$cron_configured" = "true" ]; then
     echo "[Setup] Updates will run according to schedule: $GEOIP_UPDATE_SCHEDULE"
     echo "[Setup] Logs will be written to: $CRON_LOG_FILE"
     
-    # Test run
+    # Test run - SECURITY NOTE: Use \$ to reference env var, not expand it to avoid logging API key
     echo ""
     echo "[Setup] To test the update now, run:"
-    echo "  /opt/geoip/geoip-update.sh --api-key '$GEOIP_API_KEY' --directory '$GEOIP_TARGET_DIR'"
+    echo "  /opt/geoip/geoip-update.sh --api-key \$GEOIP_API_KEY --directory '$GEOIP_TARGET_DIR'"
 else
     echo ""
     echo "[Setup] ⚠️  Automatic updates require manual configuration"
