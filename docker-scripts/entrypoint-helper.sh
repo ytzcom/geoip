@@ -213,25 +213,51 @@ geoip_select_best_script() {
     return 0
 }
 
+# Parse database list from GEOIP_DATABASES environment variable
+geoip_get_expected_databases() {
+    local database_list="${GEOIP_DATABASES:-all}"
+    
+    if [ "$database_list" = "all" ]; then
+        # All 7 databases: 4 MaxMind MMDB + 3 IP2Location BIN
+        echo "GeoIP2-City.mmdb GeoIP2-Country.mmdb GeoIP2-ISP.mmdb GeoIP2-Connection-Type.mmdb IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"
+    else
+        # Parse comma-separated list and normalize
+        echo "$database_list" | sed 's/,/ /g' | tr -s ' '
+    fi
+}
+
 # Check if GeoIP databases need to be downloaded
 geoip_check_databases() {
     local need_download=false
+    local expected_databases
+    local missing_count=0
+    local total_count=0
     
     if [ ! -d "$GEOIP_TARGET_DIR" ]; then
         geoip_log_info "GeoIP directory does not exist: $GEOIP_TARGET_DIR"
         need_download=true
     else
-        # Check for key database files
-        local missing_count=0
-        for db in "GeoIP2-City.mmdb" "GeoIP2-Country.mmdb"; do
+        # Get expected database list based on GEOIP_DATABASES setting
+        expected_databases=$(geoip_get_expected_databases)
+        
+        geoip_log_info "Checking for expected databases based on GEOIP_DATABASES=${GEOIP_DATABASES:-all}"
+        
+        # Check each expected database file
+        for db in $expected_databases; do
+            total_count=$((total_count + 1))
             if [ ! -f "$GEOIP_TARGET_DIR/$db" ]; then
                 geoip_log_info "Missing database: $db"
                 missing_count=$((missing_count + 1))
+            else
+                geoip_log_info "Found database: $db"
             fi
         done
         
         if [ $missing_count -gt 0 ]; then
             need_download=true
+            geoip_log_info "Databases missing: $missing_count/$total_count"
+        else
+            geoip_log_info "All expected databases present: $total_count/$total_count"
         fi
     fi
     
@@ -425,31 +451,39 @@ geoip_init() {
 
 # Health check function for monitoring
 geoip_health_check() {
-    if geoip_check_databases; then
-        echo "HEALTHY: GeoIP databases present"
-        
-        # Additional checks if databases exist
-        local db_count=0
-        local total_size=0
-        
-        for db_file in "$GEOIP_TARGET_DIR"/*.mmdb "$GEOIP_TARGET_DIR"/*.BIN; do
-            if [ -f "$db_file" ]; then
-                db_count=$((db_count + 1))
-                if command -v stat >/dev/null 2>&1; then
-                    size=$(stat -c%s "$db_file" 2>/dev/null || stat -f%z "$db_file" 2>/dev/null || echo 0)
-                    total_size=$((total_size + size))
-                fi
+    local expected_databases
+    local expected_count=0
+    local present_count=0
+    local total_size=0
+    
+    # Get expected database list
+    expected_databases=$(geoip_get_expected_databases)
+    
+    # Count expected and present databases
+    for db in $expected_databases; do
+        expected_count=$((expected_count + 1))
+        if [ -f "$GEOIP_TARGET_DIR/$db" ]; then
+            present_count=$((present_count + 1))
+            if command -v stat >/dev/null 2>&1; then
+                size=$(stat -c%s "$GEOIP_TARGET_DIR/$db" 2>/dev/null || stat -f%z "$GEOIP_TARGET_DIR/$db" 2>/dev/null || echo 0)
+                total_size=$((total_size + size))
             fi
-        done
-        
-        echo "  Databases: $db_count files"
+        fi
+    done
+    
+    if geoip_check_databases; then
+        echo "HEALTHY: All expected GeoIP databases present"
+        echo "  Expected databases (GEOIP_DATABASES=${GEOIP_DATABASES:-all}): $expected_count"
+        echo "  Present databases: $present_count/$expected_count"
         if [ $total_size -gt 0 ]; then
             echo "  Total size: $((total_size / 1024 / 1024))MB"
         fi
-        
         return 0
     else
         echo "UNHEALTHY: GeoIP databases missing or incomplete"
+        echo "  Expected databases (GEOIP_DATABASES=${GEOIP_DATABASES:-all}): $expected_count"  
+        echo "  Present databases: $present_count/$expected_count"
+        echo "  Missing: $((expected_count - present_count)) databases"
         return 1
     fi
 }

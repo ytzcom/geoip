@@ -98,7 +98,7 @@ jobs:
 
             # Run the deployment script
             echo "🚀 Running deployment script..."
-            bash infrastructure/docker-deploy.sh
+            bash deploy/docker-deploy.sh
           else
             # Initial deployment - clone and run
             echo "📥 Initial deployment - setting up repository..."
@@ -108,7 +108,7 @@ jobs:
             cd "$DEPLOY_DIR"
 
             # Run deployment script
-            bash infrastructure/docker-deploy.sh
+            bash deploy/docker-deploy.sh
           fi
 
   check-deployment:
