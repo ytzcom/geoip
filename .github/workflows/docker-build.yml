@@ -295,12 +295,27 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
+      - name: Get image digest
+        id: get-digest
+        run: |
+          # Pull the image to ensure it's available locally
+          docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }}
+          
+          # Get the digest from the image
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' \
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }} \
+            | cut -d'@' -f2)
+          
+          echo "Found digest: ${DIGEST}"
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
       - name: Sign container image
         env:
           COSIGN_EXPERIMENTAL: 1
         run: |
+          # Sign using digest instead of tag for better security
           cosign sign --yes \
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }}
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}@${{ steps.get-digest.outputs.digest }}
 
   create-release:
     runs-on: ubuntu-latest
