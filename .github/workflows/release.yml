@@ -4,45 +4,269 @@ on:
   push:
     tags:
       - 'v*'
-      - 'go-v*'
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to release (e.g., v1.0.0)'
         required: true
         default: 'v1.0.0'
-  workflow_run:
-    workflows: ["Build and Push Docker Images"]
-    types:
-      - completed
 
 permissions:
   contents: write
   packages: write
-  actions: read
+  id-token: write
 
 env:
   DOCKER_REGISTRY: docker.io
   DOCKER_NAMESPACE: ytzcom
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
-  # Wait for docker workflow to complete when triggered by tag push
-  wait-for-docker:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+  # Step 1: Setup and version determination
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      docker-cache-key: ${{ steps.cache.outputs.docker-key }}
+      go-cache-key: ${{ steps.cache.outputs.go-key }}
     steps:
-      - name: Wait for Docker workflow
-        uses: lewagon/wait-on-check-action@v1.3.1
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
-          check-name: 'notification'  # Final job in docker workflow
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 30
-  build-binaries:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          # Ensure version starts with 'v'
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            VERSION="v${VERSION}"
+          fi
+          # Strip any 'go-' prefix if present
+          VERSION="${VERSION#go-}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Generate cache keys
+        id: cache
+        run: |
+          echo "docker-key=docker-${{ runner.os }}-${{ hashFiles('cli/python/requirements.txt', 'cli/go/go.mod', 'api-server/requirements.txt') }}" >> $GITHUB_OUTPUT
+          echo "go-key=go-${{ runner.os }}-${{ hashFiles('cli/go/go.mod', 'cli/go/go.sum') }}" >> $GITHUB_OUTPUT
+
+  # Step 2: Build all Docker images in parallel
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Scripts-Only Image for Integration
+          - name: geoip-scripts
+            context: .
+            dockerfile: docker-scripts/Dockerfile
+            description: "GeoIP scripts-only image for easy Docker integration"
+            category: scripts
+            
+          # CLI Client Images
+          - name: geoip-updater
+            context: ./cli/python
+            dockerfile: Dockerfile
+            description: "GeoIP database updater - Python CLI"
+            category: cli
+            
+          - name: geoip-updater-cron
+            context: ./cli
+            dockerfile: python-cron/Dockerfile
+            description: "GeoIP database updater - Secure Cron with supercronic"
+            category: cli
+            
+          - name: geoip-updater-k8s
+            context: ./cli
+            dockerfile: python-k8s/Dockerfile
+            description: "GeoIP database updater - Kubernetes optimized"
+            category: cli
+            
+          - name: geoip-updater-go
+            context: ./cli/go
+            dockerfile: Dockerfile
+            description: "GeoIP database updater - Go binary"
+            category: cli
+
+          # API Server Images
+          - name: geoip-api
+            context: ./api-server
+            dockerfile: Dockerfile
+            description: "GeoIP Authentication API Server - FastAPI with S3 backend"
+            category: api
+            
+          - name: geoip-api-nginx
+            context: ./api-server
+            dockerfile: Dockerfile.nginx
+            description: "GeoIP Authentication API Server - Production with Nginx reverse proxy"
+            category: api
+            
+          - name: geoip-api-dev
+            context: ./api-server
+            dockerfile: Dockerfile.dev
+            description: "GeoIP Authentication API Server - Development with debug features"
+            category: api
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}
+          tags: |
+            type=raw,value=${{ needs.setup.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ needs.setup.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.setup.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.setup.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.name }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.vendor=YTZ
+            org.opencontainers.image.category=${{ matrix.category }}
+            org.opencontainers.image.version=${{ needs.setup.outputs.version }}
+            maintainer=YTZ
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        id: build
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=${{ matrix.name }}
+            type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:buildcache
+          cache-to: |
+            type=gha,mode=max,scope=${{ matrix.name }}
+            type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:buildcache,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            VERSION=${{ needs.setup.outputs.version }}
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] || github.event.head_commit.timestamp || github.event.repository.updated_at }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Generate SBOM
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: |
+            # Use anchore/sbom-action via Docker to generate SBOM
+            docker run --rm -v "$PWD":/workspace \
+              anchore/syft:latest \
+              ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:${{ needs.setup.outputs.version }} \
+              -o spdx-json=/workspace/${{ matrix.name }}-sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.name }}
+          path: ${{ matrix.name }}-sbom.spdx.json
+          retention-days: 30
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:${{ needs.setup.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.name }}.sarif'
+          severity: 'CRITICAL,HIGH'
+          timeout: '10m'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results-${{ matrix.name }}.sarif'
+          category: 'trivy-${{ matrix.name }}'
+
+  # Step 3: Sign Docker images
+  sign-docker:
+    name: Sign Docker Images
+    runs-on: ubuntu-latest
+    needs: [setup, build-docker]
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        image:
+          - geoip-scripts
+          - geoip-updater
+          - geoip-updater-cron
+          - geoip-updater-k8s
+          - geoip-updater-go
+          - geoip-api
+          - geoip-api-nginx
+          - geoip-api-dev
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Get image digest
+        id: get-digest
+        run: |
+          # Pull the image to ensure it's available locally
+          docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }}
+          
+          # Get the digest from the image
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' \
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }} \
+            | cut -d'@' -f2)
+          
+          echo "Found digest: ${DIGEST}"
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
+      - name: Sign container image with GitHub OIDC
+        run: |
+          cosign sign --yes \
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}@${{ steps.get-digest.outputs.digest }}
+
+  # Step 4: Build Go binaries in parallel
+  build-go:
     name: Build Go Binaries
     runs-on: ubuntu-latest
-    needs: [wait-for-docker]
-    if: always() && (needs.wait-for-docker.result == 'success' || needs.wait-for-docker.result == 'skipped')
+    needs: setup
     strategy:
       matrix:
         include:
@@ -86,19 +310,6 @@ jobs:
           go-version: '1.21'
           cache: false
 
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          # Remove 'go-' prefix if present
-          VERSION="${VERSION#go-}"
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Building version: ${VERSION}"
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.os }}
@@ -107,14 +318,14 @@ jobs:
         run: |
           cd cli/go
           
-          # Build the binary (flags inline to avoid shell expansion issues)
+          # Build the binary
           echo "Building for ${{ matrix.os }}/${{ matrix.arch }}..."
           if [ -n "${{ matrix.arm }}" ]; then
             echo "  ARM version: ${{ matrix.arm }}"
           fi
           
           go build \
-            -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }}" \
+            -ldflags="-s -w -X main.version=${{ needs.setup.outputs.version }}" \
             -trimpath \
             -o ../../${{ matrix.output }} \
             .
@@ -148,40 +359,27 @@ jobs:
             ${{ matrix.output }}.gz
             ${{ matrix.output }}.tar.gz
 
+  # Step 5: Create unified release with all artifacts
   create-release:
     name: Create Unified Release
-    needs: build-binaries
     runs-on: ubuntu-latest
-    
+    needs: [setup, build-docker, sign-docker, build-go]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          # Remove 'go-' prefix if present
-          VERSION="${VERSION#go-}"
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Release version: ${VERSION}"
 
       - name: Check if release exists
         id: check-release
         run: |
           # Check if release already exists (e.g., manual release)
-          if gh release view "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          if gh release view "${{ needs.setup.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Release ${{ steps.version.outputs.version }} already exists"
+            echo "Release ${{ needs.setup.outputs.version }} already exists"
             # Get existing release body for preservation
-            gh release view "${{ steps.version.outputs.version }}" --json body --jq '.body' > existing-release-body.md || echo "" > existing-release-body.md
+            gh release view "${{ needs.setup.outputs.version }}" --json body --jq '.body' > existing-release-body.md || echo "" > existing-release-body.md
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Release ${{ steps.version.outputs.version }} does not exist"
+            echo "Release ${{ needs.setup.outputs.version }} does not exist"
             echo "" > existing-release-body.md
           fi
         env:
@@ -193,12 +391,11 @@ jobs:
           path: binaries/
           pattern: binary-*
 
-      - name: Download Docker workflow SBOMs
-        continue-on-error: true
+      - name: Download Docker SBOMs
         uses: actions/download-artifact@v4
         with:
-          name: release-sboms
-          path: ./sboms/
+          path: sboms/
+          pattern: sbom-*
 
       - name: Prepare release assets
         run: |
@@ -212,10 +409,12 @@ jobs:
             fi
           done
           
-          # Add SBOMs if available
-          if [ -d "./sboms" ] && [ "$(ls -A ./sboms)" ]; then
-            mv ./sboms/*.json release/ 2>/dev/null || true
-          fi
+          # Move all SBOMs to release directory
+          for dir in sboms/sbom-*; do
+            if [ -d "$dir" ]; then
+              mv $dir/*.json release/ 2>/dev/null || true
+            fi
+          done
           
           # List all release files
           echo "Release assets:"
@@ -253,147 +452,163 @@ jobs:
           fi
           
           # Add unified release content
-          cat >> release-notes.md << EOF
-          ## GeoIP Updater Release ${{ steps.version.outputs.version }}
+          cat >> release-notes.md << 'EOF'
+          ## GeoIP Updater Release ${{ needs.setup.outputs.version }}
           
-          This is a unified release containing both Go binaries and Docker images.
+          This is a unified release containing both Docker images and Go binaries.
           
           ### 🐳 Docker Images
           
-          Pull the latest Docker images for this release:
+          All Docker images are available with the following tags:
+          - `${{ needs.setup.outputs.version }}` - This specific version
+          - `latest` - Always points to the most recent release
           
           #### Integration Image
-          \`\`\`bash
+          ```bash
           # Scripts-only image for easy integration (2-line Docker integration!)
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-scripts:${{ steps.version.outputs.version }}
-          \`\`\`
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-scripts:${{ needs.setup.outputs.version }}
+          ```
           
           #### CLI Client Images
-          \`\`\`bash
+          ```bash
           # Python CLI version
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ steps.version.outputs.version }}
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
           
           # Cron version with supercronic
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ steps.version.outputs.version }}
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ needs.setup.outputs.version }}
           
           # Kubernetes optimized version
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-k8s:${{ steps.version.outputs.version }}
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-k8s:${{ needs.setup.outputs.version }}
           
-          # Go binary version
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-go:${{ steps.version.outputs.version }}
-          \`\`\`
+          # Go binary version (Docker)
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-go:${{ needs.setup.outputs.version }}
+          ```
           
           #### API Server Images
-          \`\`\`bash
+          ```bash
           # FastAPI server with S3 backend
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ steps.version.outputs.version }}
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ needs.setup.outputs.version }}
           
           # Production server with Nginx reverse proxy
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ steps.version.outputs.version }}
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ needs.setup.outputs.version }}
           
           # Development server with debug features
-          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-dev:${{ steps.version.outputs.version }}
-          \`\`\`
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-dev:${{ needs.setup.outputs.version }}
+          ```
           
           ### 📦 Go Binary Downloads
           
           Download the appropriate binary for your platform:
           
           #### Linux
-          - \`geoip-updater-linux-amd64\` - Linux x86_64
-          - \`geoip-updater-linux-arm64\` - Linux ARM64
-          - \`geoip-updater-linux-arm\` - Linux ARM v7
+          - `geoip-updater-linux-amd64` - Linux x86_64
+          - `geoip-updater-linux-arm64` - Linux ARM64
+          - `geoip-updater-linux-arm` - Linux ARM v7
           
           #### macOS
-          - \`geoip-updater-darwin-amd64\` - macOS Intel
-          - \`geoip-updater-darwin-arm64\` - macOS Apple Silicon (M1/M2)
+          - `geoip-updater-darwin-amd64` - macOS Intel
+          - `geoip-updater-darwin-arm64` - macOS Apple Silicon (M1/M2/M3)
           
           #### Windows
-          - \`geoip-updater-windows-amd64.exe\` - Windows x86_64
-          - \`geoip-updater-windows-arm64.exe\` - Windows ARM64
+          - `geoip-updater-windows-amd64.exe` - Windows x86_64
+          - `geoip-updater-windows-arm64.exe` - Windows ARM64
           
           #### Other
-          - \`geoip-updater-freebsd-amd64\` - FreeBSD x86_64
+          - `geoip-updater-freebsd-amd64` - FreeBSD x86_64
           
           ### 🔒 Verification
           
           #### Docker Images
           All Docker images are signed using keyless signing with Sigstore:
-          \`\`\`bash
+          ```bash
           # Verify any image (example with CLI image)
-          cosign verify \\
-            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/docker-build.yml@${{ github.ref }}" \\
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \\
-            ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ steps.version.outputs.version }}
-          \`\`\`
+          cosign verify \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.setup.outputs.version }}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
+          ```
           
           #### Go Binaries
           Verify your binary download using the provided checksums:
-          \`\`\`bash
+          ```bash
           # Verify SHA256
           sha256sum -c checksums-sha256.txt
           
           # Verify MD5
           md5sum -c checksums-md5.txt
-          \`\`\`
+          ```
           
           ### 📊 File Formats
           
-          Each binary is available in three formats:
+          Each Go binary is available in three formats:
           - **Uncompressed**: Direct executable
-          - **Gzip** (\`.gz\`): Single file compression
-          - **Tar.gz** (\`.tar.gz\`): Archive format
+          - **Gzip** (`.gz`): Single file compression
+          - **Tar.gz** (`.tar.gz`): Archive format
           
           ### 🚀 Quick Start
           
-          #### Docker
-          \`\`\`bash
-          # Run with Docker (easiest)
-          docker run --rm ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ steps.version.outputs.version }} --version
-          \`\`\`
+          #### Docker (Recommended)
+          ```bash
+          # Run with Docker
+          docker run --rm ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }} --version
+          
+          # Or use docker-compose
+          version: '3'
+          services:
+            geoip-updater:
+              image: ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
+              environment:
+                - MAXMIND_ACCOUNT_ID=your_account_id
+                - MAXMIND_LICENSE_KEY=your_license_key
+          ```
           
           #### Go Binary
-          \`\`\`bash
+          ```bash
           # Download for your platform (example: Linux AMD64)
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/geoip-updater-linux-amd64
+          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.version }}/geoip-updater-linux-amd64
           
           # Make executable
           chmod +x geoip-updater-linux-amd64
           
           # Run
           ./geoip-updater-linux-amd64 --version
-          \`\`\`
+          ```
           
           ### 📄 Additional Files
           
-          This release also includes:
-          - Software Bill of Materials (SBOM) files for all Docker images
-          - SHA256 and MD5 checksums for all binaries
+          This release includes:
+          - **SBOMs**: Software Bill of Materials for all Docker images (`*-sbom.spdx.json`)
+          - **Checksums**: SHA256 and MD5 checksums for all binaries
+          - **Compressed formats**: All binaries available in `.gz` and `.tar.gz` formats
           
-          ### 📝 Changelog
+          ### 📝 What's Changed
           
           See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          
+          ### 🙏 Credits
+          
+          Thank you to all contributors and users of GeoIP Updater!
           EOF
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.setup.outputs.version }}
+          name: Release ${{ needs.setup.outputs.version }}
           body_path: release-notes.md
           draft: false
           prerelease: false
-          # Append files to existing release or create new release
           files: |
             release/geoip-updater-*
             release/checksums-*.txt
-            release/*.json
+            release/*-sbom.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Step 6: Test released binaries
   test-binaries:
-    name: Test Binaries
-    needs: create-release
+    name: Test Released Binaries
+    needs: [setup, create-release]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -406,27 +621,14 @@ jobs:
             binary: geoip-updater-windows-amd64.exe
     
     steps:
-      - name: Get version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          # Remove 'go-' prefix if present
-          VERSION="${VERSION#go-}"
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
       - name: Download binary from release
         shell: bash
         run: |
           # Wait a moment for release to be available
-          sleep 5
+          sleep 10
           
           # Download the binary
-          curl -LO "https://github.com/ytzcom/geoip/releases/download/${{ steps.version.outputs.version }}/${{ matrix.binary }}"
+          curl -LO "https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.version }}/${{ matrix.binary }}"
           
           # Make executable (except Windows)
           if [ "${{ runner.os }}" != "Windows" ]; then
@@ -444,3 +646,20 @@ jobs:
           
           # Test list databases (doesn't require API key)
           ./${{ matrix.binary }} --list-databases || true
+
+  # Step 7: Update Docker Hub description
+  update-docker-hub:
+    runs-on: ubuntu-latest
+    needs: [setup, build-docker]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update Docker Hub Description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          repository: ${{ env.DOCKER_NAMESPACE }}/geoip-updater
+          readme-filepath: ./cli/python/README.md
+          short-description: "GeoIP database updater with support for MaxMind and IP2Location - Release ${{ needs.setup.outputs.version }}"

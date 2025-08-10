@@ -1,11 +1,9 @@
-name: Build and Push Docker Images
+name: Docker CI/CD
 
 on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
@@ -49,12 +47,12 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ $GITHUB_REF == refs/tags/v* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}  # Strip 'refs/tags/v' prefix → 1.0.0
-          elif [[ $GITHUB_REF == refs/heads/main ]]; then
+          if [[ $GITHUB_REF == refs/heads/main ]]; then
             VERSION=latest
-          else
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             VERSION=pr-${{ github.event.pull_request.number }}
+          else
+            VERSION=dev
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
@@ -158,20 +156,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}
-          # Optimized tagging strategy to reduce Docker Hub storage:
-          # - Removed SHA tags (main-abc123f) that create the most clutter
-          # - Added explicit PR prefix for better organization 
-          # - Added explicit develop tag for development branch
-          # - Kept semantic versioning for releases (v1.0.0, 1.0, 1)
-          # - Kept branch and latest tags for core functionality
+          # Optimized tagging strategy for CI/CD builds:
+          # - Branch builds get branch name (main → latest)
+          # - PR builds get pr-<number> tag
+          # - Manual/scheduled builds get appropriate tags
           tags: |
             type=ref,event=branch
             type=ref,event=pr,prefix=pr-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
+            type=raw,value=weekly,enable=${{ github.event_name == 'schedule' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.name }}
             org.opencontainers.image.description=${{ matrix.description }}
@@ -269,77 +263,8 @@ jobs:
           readme-filepath: ./cli/python/README.md
           short-description: "GeoIP database updater with support for MaxMind and IP2Location"
 
-  # Automated image signing using GitHub OIDC (keyless signing)
-  sign-images:
-    runs-on: ubuntu-latest
-    needs: [setup, build-matrix]
-    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      matrix:
-        image:
-          - geoip-scripts
-          - geoip-updater
-          - geoip-updater-cron
-          - geoip-updater-k8s
-          - geoip-updater-go
-          - geoip-api
-          - geoip-api-nginx
-          - geoip-api-dev
-    steps:
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Get image digest
-        id: get-digest
-        run: |
-          # Pull the image to ensure it's available locally
-          docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }}
-          
-          # Get the digest from the image
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' \
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}:${{ needs.setup.outputs.version }} \
-            | cut -d'@' -f2)
-          
-          echo "Found digest: ${DIGEST}"
-          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-
-      - name: Sign container image with GitHub OIDC
-        run: |
-          cosign sign --yes \
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}@${{ steps.get-digest.outputs.digest }}
-
-  # SBOMs are now uploaded as workflow artifacts for the unified release workflow
-  # The create-release job has been moved to release.yml to avoid conflicts
-
-  # Collect and upload all SBOMs for the unified release workflow
-  upload-release-artifacts:
-    runs-on: ubuntu-latest
-    needs: [setup, build-matrix]
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - name: Download SBOMs
-        uses: actions/download-artifact@v4
-        with:
-          pattern: sbom-*
-          merge-multiple: true
-          path: ./sboms
-
-      - name: Upload consolidated SBOMs for release
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-sboms
-          path: ./sboms/*.json
-          retention-days: 90
+  # Image signing and SBOM collection have been moved to the unified release.yml workflow
+  # This workflow now focuses on CI/CD builds for development and PRs
 
   notification:
     runs-on: ubuntu-latest
