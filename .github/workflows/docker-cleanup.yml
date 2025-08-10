@@ -62,44 +62,58 @@ jobs:
             echo "sha_retention=14" >> $GITHUB_OUTPUT
           fi
 
-      - name: Generate cleanup configuration
-        id: config
+      - name: Display cleanup configuration
         run: |
-          # Calculate cutoff dates
-          PR_CUTOFF=$(date -d "${{ steps.params.outputs.pr_retention }} days ago" +%Y-%m-%d)
-          SHA_CUTOFF=$(date -d "${{ steps.params.outputs.sha_retention }} days ago" +%Y-%m-%d)
-          
-          # Create JSON config for tag deletion
-          cat > cleanup_config.json << EOF
-          [
-            {
-              "tag_pattern": "^pr-[0-9]+$",
-              "cutoff_date": "${PR_CUTOFF}",
-              "description": "PR tags older than ${{ steps.params.outputs.pr_retention }} days"
-            },
-            {
-              "tag_pattern": "^(main|develop|master)-[a-f0-9]{7}$",
-              "cutoff_date": "${SHA_CUTOFF}",
-              "description": "Branch SHA tags older than ${{ steps.params.outputs.sha_retention }} days"
-            }
-          ]
-          EOF
-          
-          echo "Generated cleanup configuration:"
-          cat cleanup_config.json
-          
-          echo "config_file=cleanup_config.json" >> $GITHUB_OUTPUT
+          echo "## Cleanup Configuration for ${{ matrix.image }}"
+          echo "- Dry run mode: ${{ steps.params.outputs.dry_run }}"
+          echo "- PR tag retention: ${{ steps.params.outputs.pr_retention }} days"
+          echo "- SHA tag retention: ${{ steps.params.outputs.sha_retention }} days"
+          echo ""
+          echo "Tags to be cleaned:"
+          echo "- PR tags (pr-*) older than ${{ steps.params.outputs.pr_retention }} days"
+          echo "- Branch SHA tags (main-*, develop-*, master-*) older than ${{ steps.params.outputs.sha_retention }} days"
+          echo ""
+          echo "Protected tags (never deleted):"
+          echo "- latest, main, master, develop"
+          echo "- Semantic versions (v1.0.0, 1.0.0, 1.0, 1)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
 
       - name: Docker Hub Tag Cleanup
-        uses: joshbeard/docker-hub-tag-delete@v1
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          repository: ${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}
-          tags_source: 'json'
-          tags_json: ${{ steps.config.outputs.config_file }}
-          dry_run: ${{ steps.params.outputs.dry_run }}
-          api_base_url: https://hub.docker.com/v2
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          DOCKER_NAMESPACE: ${{ env.DOCKER_NAMESPACE }}
+        run: |
+          # Set dry run flag
+          DRY_RUN_FLAG=""
+          if [ "${{ steps.params.outputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          
+          # Set verbose flag for debugging in manual runs
+          VERBOSE_FLAG=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERBOSE_FLAG="--verbose"
+          fi
+          
+          # Run cleanup script for this specific image
+          python .github/scripts/dockerhub-cleanup.py \
+            --repositories ${{ matrix.image }} \
+            --pr-retention ${{ steps.params.outputs.pr_retention }} \
+            --sha-retention ${{ steps.params.outputs.sha_retention }} \
+            $DRY_RUN_FLAG \
+            $VERBOSE_FLAG || exit_code=$?
+          
+          # Exit with the same code as the script
+          exit ${exit_code:-0}
 
       - name: Cleanup summary
         run: |

@@ -269,10 +269,14 @@ jobs:
           readme-filepath: ./cli/python/README.md
           short-description: "GeoIP database updater with support for MaxMind and IP2Location"
 
+  # Automated image signing using GitHub OIDC (keyless signing)
   sign-images:
     runs-on: ubuntu-latest
     needs: [setup, build-matrix]
     if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         image:
@@ -309,11 +313,8 @@ jobs:
           echo "Found digest: ${DIGEST}"
           echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
 
-      - name: Sign container image
-        env:
-          COSIGN_EXPERIMENTAL: 1
+      - name: Sign container image with GitHub OIDC
         run: |
-          # Sign using digest instead of tag for better security
           cosign sign --yes \
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}@${{ steps.get-digest.outputs.digest }}
 
@@ -380,15 +381,18 @@ jobs:
 
             ## Verification
             
-            All images are signed with Cosign. To verify:
+            All images are signed using keyless signing with Sigstore. To verify:
             ```bash
-            # Verify CLI images
-            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
-            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ needs.setup.outputs.version }}
+            # Verify any image (example with CLI image)
+            cosign verify \
+              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/docker-build.yml@${{ github.ref }}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
             
-            # Verify API images  
-            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ needs.setup.outputs.version }}
-            cosign verify ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ needs.setup.outputs.version }}
+            # Or verify without specifying the identity (less secure)
+            cosign verify \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
             ```
 
             ## SBOMs
