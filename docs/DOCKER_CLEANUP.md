@@ -4,21 +4,31 @@ This document explains how to configure automated Docker Hub cleanup to prevent 
 
 ## Overview
 
-The Docker Hub cleanup workflow automatically removes old and unused image tags on a weekly schedule while preserving important releases and current development tags.
+The Docker Hub cleanup workflow automatically removes old and unused image tags on a weekly schedule while preserving important releases and current development tags. This implementation uses a modern Python script that directly integrates with the Docker Hub API v2.
+
+## Implementation Details
+
+The cleanup system uses a custom Python script (`/.github/scripts/dockerhub-cleanup.py`) that provides:
+- Direct Docker Hub API v2 integration
+- Dry-run capability for safety
+- Detailed logging and summary statistics
+- Secure authentication handling
+- Customizable retention policies
+- Parallel processing for multiple repositories
 
 ## Required Secrets
 
 Add these secrets to your GitHub repository settings (`Settings > Secrets and variables > Actions`):
 
-### DOCKERHUB_CLEANUP_USERNAME
-- **Value**: Your Docker Hub username (same as `DOCKERHUB_USERNAME`)
+### DOCKERHUB_USERNAME
+- **Value**: Your Docker Hub username
 - **Purpose**: Authentication for Docker Hub API access during cleanup operations
 
-### DOCKERHUB_CLEANUP_TOKEN
-- **Value**: A Docker Hub Personal Access Token (PAT) with `Public Repo Write` permissions
+### DOCKERHUB_PASSWORD
+- **Value**: Your Docker Hub password or Personal Access Token
 - **Purpose**: Secure authentication for tag deletion operations
 
-⚠️ **Important**: Use a Personal Access Token, not a password. Regular passwords may not work with the cleanup API.
+⚠️ **Important**: While the script supports both passwords and Personal Access Tokens, using a PAT is recommended for better security.
 
 ### How to Create a Docker Hub Personal Access Token
 
@@ -97,6 +107,61 @@ You can manually trigger cleanup with custom parameters:
 2. **Review logs**: Check what would be deleted before proceeding
 3. **Test cleanup**: Run with a short retention period on a test tag
 4. **Monitor results**: Verify the cleanup worked as expected
+
+### Testing Locally
+
+You can test the cleanup script locally before deploying:
+
+```bash
+# Set credentials
+export DOCKERHUB_USERNAME=your-username
+export DOCKERHUB_PASSWORD=your-password
+export DOCKER_NAMESPACE=ytzcom
+
+# Run in dry-run mode (preview only)
+python .github/scripts/dockerhub-cleanup.py --dry-run
+
+# Run with verbose logging for debugging
+python .github/scripts/dockerhub-cleanup.py --dry-run --verbose
+
+# Run with custom retention
+python .github/scripts/dockerhub-cleanup.py \
+  --dry-run \
+  --pr-retention 7 \
+  --sha-retention 3
+
+# Clean specific repositories
+python .github/scripts/dockerhub-cleanup.py \
+  --dry-run \
+  --repositories geoip-updater geoip-api
+
+# Test the cleanup logic without API calls
+python .github/scripts/test-dockerhub-cleanup.py
+```
+
+### Enhanced Features
+
+The modern Python script includes:
+- **Dual authentication strategy**: Uses Docker Registry v2 Bearer tokens (works with PATs) with Hub API fallback
+- **Automatic token refresh**: Bearer tokens are cached and refreshed before expiration
+- **Retry logic**: Exponential backoff for failed requests with rate limit handling
+- **URL encoding**: Proper handling of special characters in tag names
+- **Request timeouts**: 30-second timeout to prevent hanging
+- **Error aggregation**: Tracks failures per repository and exits with appropriate codes
+- **Verbose logging**: Detailed debug output with timestamps when enabled
+- **Consistent returns**: Always returns structured data even for empty repositories
+
+#### Authentication Strategy
+
+The script uses a dual authentication approach for maximum compatibility:
+1. **Primary**: Docker Registry v2 Bearer token authentication (auth.docker.io)
+   - Works with both passwords and Personal Access Tokens
+   - Used for tag deletion via Registry API
+2. **Fallback**: Docker Hub API with Basic authentication
+   - Used when Registry API is unavailable
+   - Works for public repositories without authentication
+
+This ensures the script works reliably with both Docker Hub passwords and Personal Access Tokens (PATs).
 
 ## Security Considerations
 
