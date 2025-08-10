@@ -318,14 +318,15 @@ jobs:
           cosign sign --yes \
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.image }}@${{ steps.get-digest.outputs.digest }}
 
-  create-release:
+  # SBOMs are now uploaded as workflow artifacts for the unified release workflow
+  # The create-release job has been moved to release.yml to avoid conflicts
+
+  # Collect and upload all SBOMs for the unified release workflow
+  upload-release-artifacts:
     runs-on: ubuntu-latest
-    needs: [setup, build-matrix, sign-images]
+    needs: [setup, build-matrix]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Download SBOMs
         uses: actions/download-artifact@v4
         with:
@@ -333,74 +334,12 @@ jobs:
           merge-multiple: true
           path: ./sboms
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload consolidated SBOMs for release
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.setup.outputs.version }}
-          name: Release ${{ needs.setup.outputs.version }}
-          body: |
-            ## Docker Images
-
-            This release includes the following Docker images:
-            
-            ### Integration Image
-            ```bash
-            # Scripts-only image for easy integration (2-line Docker integration!)
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-scripts:${{ needs.setup.outputs.version }}
-            ```
-            
-            ### CLI Client Images
-            ```bash
-            # Python CLI version
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
-            
-            # Cron version with supercronic
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ needs.setup.outputs.version }}
-            
-            # Kubernetes optimized version
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-k8s:${{ needs.setup.outputs.version }}
-            
-            # Go binary version
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-go:${{ needs.setup.outputs.version }}
-            ```
-
-            ### API Server Images
-            ```bash
-            # FastAPI server with S3 backend
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ needs.setup.outputs.version }}
-            
-            # Production server with Nginx reverse proxy
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ needs.setup.outputs.version }}
-            
-            # Development server with debug features
-            docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-dev:${{ needs.setup.outputs.version }}
-            ```
-
-            ## What's Changed
-            Please see the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
-
-            ## Verification
-            
-            All images are signed using keyless signing with Sigstore. To verify:
-            ```bash
-            # Verify any image (example with CLI image)
-            cosign verify \
-              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/docker-build.yml@${{ github.ref }}" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
-            
-            # Or verify without specifying the identity (less secure)
-            cosign verify \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ needs.setup.outputs.version }}
-            ```
-
-            ## SBOMs
-            Software Bill of Materials (SBOM) files are attached to this release.
-          files: |
-            sboms/*.json
-          draft: false
-          prerelease: false
+          name: release-sboms
+          path: ./sboms/*.json
+          retention-days: 90
 
   notification:
     runs-on: ubuntu-latest

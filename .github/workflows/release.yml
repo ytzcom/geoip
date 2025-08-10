@@ -1,4 +1,4 @@
-name: Release Go Binaries
+name: Unified Release
 
 on:
   push:
@@ -11,15 +11,38 @@ on:
         description: 'Version to release (e.g., v1.0.0)'
         required: true
         default: 'v1.0.0'
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types:
+      - completed
 
 permissions:
   contents: write
   packages: write
+  actions: read
+
+env:
+  DOCKER_REGISTRY: docker.io
+  DOCKER_NAMESPACE: ytzcom
 
 jobs:
+  # Wait for docker workflow to complete when triggered by tag push
+  wait-for-docker:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Docker workflow
+        uses: lewagon/wait-on-check-action@v1.3.1
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'notification'  # Final job in docker workflow
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
   build-binaries:
     name: Build Go Binaries
     runs-on: ubuntu-latest
+    needs: [wait-for-docker]
+    if: always() && (needs.wait-for-docker.result == 'success' || needs.wait-for-docker.result == 'skipped')
     strategy:
       matrix:
         include:
@@ -126,7 +149,7 @@ jobs:
             ${{ matrix.output }}.tar.gz
 
   create-release:
-    name: Create Release
+    name: Create Unified Release
     needs: build-binaries
     runs-on: ubuntu-latest
     
@@ -147,21 +170,52 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
 
-      - name: Download all artifacts
+      - name: Check if release exists
+        id: check-release
+        run: |
+          # Check if release already exists (e.g., manual release)
+          if gh release view "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release ${{ steps.version.outputs.version }} already exists"
+            # Get existing release body for preservation
+            gh release view "${{ steps.version.outputs.version }}" --json body --jq '.body' > existing-release-body.md || echo "" > existing-release-body.md
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release ${{ steps.version.outputs.version }} does not exist"
+            echo "" > existing-release-body.md
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Go binary artifacts
         uses: actions/download-artifact@v4
         with:
           path: binaries/
           pattern: binary-*
 
+      - name: Download Docker workflow SBOMs
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-sboms
+          path: ./sboms/
+
       - name: Prepare release assets
         run: |
-          # Move all binaries to release directory
+          # Create release directory
           mkdir -p release
+          
+          # Move all Go binaries to release directory
           for dir in binaries/binary-*; do
             if [ -d "$dir" ]; then
               mv $dir/* release/ 2>/dev/null || true
             fi
           done
+          
+          # Add SBOMs if available
+          if [ -d "./sboms" ] && [ "$(ls -A ./sboms)" ]; then
+            mv ./sboms/*.json release/ 2>/dev/null || true
+          fi
           
           # List all release files
           echo "Release assets:"
@@ -171,95 +225,169 @@ jobs:
         run: |
           cd release
           
-          # Generate SHA256 checksums
-          sha256sum geoip-updater-* > checksums-sha256.txt
-          
-          # Generate MD5 checksums (for compatibility)
-          md5sum geoip-updater-* > checksums-md5.txt
-          
-          # Show checksums
-          echo "SHA256 checksums:"
-          cat checksums-sha256.txt
-          echo ""
-          echo "MD5 checksums:"
-          cat checksums-md5.txt
+          # Generate SHA256 checksums for binaries
+          if ls geoip-updater-* 1> /dev/null 2>&1; then
+            sha256sum geoip-updater-* > checksums-sha256.txt
+            md5sum geoip-updater-* > checksums-md5.txt
+            
+            echo "SHA256 checksums:"
+            cat checksums-sha256.txt
+            echo ""
+            echo "MD5 checksums:"
+            cat checksums-md5.txt
+          else
+            echo "No binaries found to checksum"
+            touch checksums-sha256.txt checksums-md5.txt
+          fi
 
-      - name: Create release notes
+      - name: Create unified release notes
         run: |
-          cat > release-notes.md << 'EOF'
-          ## GeoIP Updater Go Binary Release ${{ steps.version.outputs.version }}
+          # Start with existing content if release exists
+          if [ -s existing-release-body.md ]; then
+            echo "## Existing Release Content" > release-notes.md
+            echo "" >> release-notes.md
+            cat existing-release-body.md >> release-notes.md
+            echo "" >> release-notes.md
+            echo "---" >> release-notes.md
+            echo "" >> release-notes.md
+          fi
           
-          ### 📦 Downloads
+          # Add unified release content
+          cat >> release-notes.md << EOF
+          ## GeoIP Updater Release ${{ steps.version.outputs.version }}
+          
+          This is a unified release containing both Go binaries and Docker images.
+          
+          ### 🐳 Docker Images
+          
+          Pull the latest Docker images for this release:
+          
+          #### Integration Image
+          \`\`\`bash
+          # Scripts-only image for easy integration (2-line Docker integration!)
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-scripts:${{ steps.version.outputs.version }}
+          \`\`\`
+          
+          #### CLI Client Images
+          \`\`\`bash
+          # Python CLI version
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ steps.version.outputs.version }}
+          
+          # Cron version with supercronic
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-cron:${{ steps.version.outputs.version }}
+          
+          # Kubernetes optimized version
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-k8s:${{ steps.version.outputs.version }}
+          
+          # Go binary version
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-updater-go:${{ steps.version.outputs.version }}
+          \`\`\`
+          
+          #### API Server Images
+          \`\`\`bash
+          # FastAPI server with S3 backend
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api:${{ steps.version.outputs.version }}
+          
+          # Production server with Nginx reverse proxy
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-nginx:${{ steps.version.outputs.version }}
+          
+          # Development server with debug features
+          docker pull ${{ env.DOCKER_NAMESPACE }}/geoip-api-dev:${{ steps.version.outputs.version }}
+          \`\`\`
+          
+          ### 📦 Go Binary Downloads
           
           Download the appropriate binary for your platform:
           
           #### Linux
-          - `geoip-updater-linux-amd64` - Linux x86_64
-          - `geoip-updater-linux-arm64` - Linux ARM64
-          - `geoip-updater-linux-arm` - Linux ARM v7
+          - \`geoip-updater-linux-amd64\` - Linux x86_64
+          - \`geoip-updater-linux-arm64\` - Linux ARM64
+          - \`geoip-updater-linux-arm\` - Linux ARM v7
           
           #### macOS
-          - `geoip-updater-darwin-amd64` - macOS Intel
-          - `geoip-updater-darwin-arm64` - macOS Apple Silicon (M1/M2)
+          - \`geoip-updater-darwin-amd64\` - macOS Intel
+          - \`geoip-updater-darwin-arm64\` - macOS Apple Silicon (M1/M2)
           
           #### Windows
-          - `geoip-updater-windows-amd64.exe` - Windows x86_64
-          - `geoip-updater-windows-arm64.exe` - Windows ARM64
+          - \`geoip-updater-windows-amd64.exe\` - Windows x86_64
+          - \`geoip-updater-windows-arm64.exe\` - Windows ARM64
           
           #### Other
-          - `geoip-updater-freebsd-amd64` - FreeBSD x86_64
+          - \`geoip-updater-freebsd-amd64\` - FreeBSD x86_64
           
           ### 🔒 Verification
           
-          Verify your download using the provided checksums:
-          - `checksums-sha256.txt` - SHA256 checksums
-          - `checksums-md5.txt` - MD5 checksums
+          #### Docker Images
+          All Docker images are signed using keyless signing with Sigstore:
+          \`\`\`bash
+          # Verify any image (example with CLI image)
+          cosign verify \\
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/docker-build.yml@${{ github.ref }}" \\
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \\
+            ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ steps.version.outputs.version }}
+          \`\`\`
           
-          ```bash
+          #### Go Binaries
+          Verify your binary download using the provided checksums:
+          \`\`\`bash
           # Verify SHA256
           sha256sum -c checksums-sha256.txt
           
           # Verify MD5
           md5sum -c checksums-md5.txt
-          ```
+          \`\`\`
           
           ### 📊 File Formats
           
           Each binary is available in three formats:
           - **Uncompressed**: Direct executable
-          - **Gzip** (`.gz`): Single file compression
-          - **Tar.gz** (`.tar.gz`): Archive format
+          - **Gzip** (\`.gz\`): Single file compression
+          - **Tar.gz** (\`.tar.gz\`): Archive format
           
           ### 🚀 Quick Start
           
-          ```bash
+          #### Docker
+          \`\`\`bash
+          # Run with Docker (easiest)
+          docker run --rm ${{ env.DOCKER_NAMESPACE }}/geoip-updater:${{ steps.version.outputs.version }} --version
+          \`\`\`
+          
+          #### Go Binary
+          \`\`\`bash
           # Download for your platform (example: Linux AMD64)
-          curl -LO https://github.com/ytzcom/geoip/releases/download/${{ steps.version.outputs.version }}/geoip-updater-linux-amd64
+          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/geoip-updater-linux-amd64
           
           # Make executable
           chmod +x geoip-updater-linux-amd64
           
           # Run
           ./geoip-updater-linux-amd64 --version
-          ```
+          \`\`\`
+          
+          ### 📄 Additional Files
+          
+          This release also includes:
+          - Software Bill of Materials (SBOM) files for all Docker images
+          - SHA256 and MD5 checksums for all binaries
           
           ### 📝 Changelog
           
-          See [CHANGELOG.md](https://github.com/ytzcom/geoip/blob/main/CHANGELOG.md) for details.
-          
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
           EOF
 
-      - name: Create GitHub Release
+      - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: Go Binary Release ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
           body_path: release-notes.md
           draft: false
           prerelease: false
+          # Append files to existing release or create new release
           files: |
             release/geoip-updater-*
             release/checksums-*.txt
+            release/*.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
