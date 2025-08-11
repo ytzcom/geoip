@@ -261,6 +261,8 @@ async def lifespan(app: FastAPI):
     
     if not databases_exist:
         logger.info("Databases not found, downloading from S3...")
+        system_state["databases_downloading"] = True
+        system_state["download_start_time"] = datetime.now()
         try:
             import asyncio
             result = await update_databases()
@@ -272,6 +274,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to download databases at startup: {e}")
             logger.warning("Continuing without databases - they will be downloaded on schedule")
+        finally:
+            system_state["databases_downloading"] = False
+            system_state["download_start_time"] = None
     
     # Initialize GeoIP reader
     try:
@@ -356,12 +361,24 @@ class DatabaseRequest(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str
+    status: str  # "healthy", "starting", "degraded"
     timestamp: str
     use_s3_urls: bool
     databases_available: int
     databases_local: int
     databases_remote: int
+    readiness: str  # "initializing", "downloading", "ready", "degraded"
+    download_in_progress: bool
+
+
+class ReadinessResponse(BaseModel):
+    ready: bool
+    status: str  # "initializing", "downloading", "ready", "degraded"
+    timestamp: str
+    databases_local: int
+    databases_expected: int
+    download_in_progress: bool
+    details: Optional[str] = None
 
 
 class MetricsResponse(BaseModel):
@@ -377,6 +394,13 @@ metrics = {
     "successful_requests": 0,
     "failed_requests": 0,
     "start_time": datetime.now()
+}
+
+# Track system state for readiness
+system_state = {
+    "databases_downloading": False,
+    "download_start_time": None,
+    "download_progress": {}
 }
 
 
@@ -501,13 +525,86 @@ async def health_check():
         if local_exists or remote_exists:
             total_available += 1
     
+    # Determine system status based on database availability
+    system_status = "healthy"
+    readiness_status = "ready"
+    
+    if system_state.get("databases_downloading", False):
+        system_status = "starting"
+        readiness_status = "downloading"
+    elif local_count == 0 and not settings.use_s3_urls:
+        system_status = "degraded"
+        readiness_status = "degraded"
+    elif local_count < len(AVAILABLE_DATABASES):
+        readiness_status = "degraded"
+    elif local_count == 0 and settings.use_s3_urls:
+        readiness_status = "ready"  # S3 mode
+    
     return HealthResponse(
-        status="healthy",
+        status=system_status,
         timestamp=datetime.now().isoformat(),
         use_s3_urls=settings.use_s3_urls,
         databases_available=total_available,
         databases_local=local_count,
-        databases_remote=remote_count
+        databases_remote=remote_count,
+        readiness=readiness_status,
+        download_in_progress=system_state.get("databases_downloading", False)
+    )
+
+
+@app.get("/ready", response_model=ReadinessResponse)
+async def readiness_check():
+    """Readiness check endpoint - indicates if the API is ready to serve requests."""
+    # Count local databases
+    local_count = 0
+    expected_count = len(AVAILABLE_DATABASES)
+    
+    for db_name, rel_path in AVAILABLE_DATABASES.items():
+        local_file = Path(settings.database_path) / rel_path
+        if local_file.exists():
+            local_count += 1
+    
+    # Determine readiness status
+    ready = False
+    status = "initializing"
+    details = None
+    
+    if system_state.get("databases_downloading", False):
+        status = "downloading"
+        ready = False
+        if system_state.get("download_start_time"):
+            elapsed = (datetime.now() - system_state["download_start_time"]).total_seconds()
+            details = f"Downloading databases for {elapsed:.0f} seconds"
+    elif local_count == 0:
+        # No local databases and not downloading
+        if settings.use_s3_urls:
+            # S3 mode - can serve requests without local databases
+            status = "ready"
+            ready = True
+            details = "Using S3 URLs for database access"
+        else:
+            status = "degraded"
+            ready = False
+            details = "No local databases available"
+    elif local_count < expected_count:
+        # Some databases available
+        status = "degraded"
+        ready = True  # Can serve partial requests
+        details = f"Only {local_count}/{expected_count} databases available locally"
+    else:
+        # All databases available
+        status = "ready"
+        ready = True
+        details = "All databases available locally"
+    
+    return ReadinessResponse(
+        ready=ready,
+        status=status,
+        timestamp=datetime.now().isoformat(),
+        databases_local=local_count,
+        databases_expected=expected_count,
+        download_in_progress=system_state.get("databases_downloading", False),
+        details=details
     )
 
 

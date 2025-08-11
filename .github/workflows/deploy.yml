@@ -225,5 +225,37 @@ jobs:
       uses: jtalk/url-health-check-action@v4
       with:
         url: ${{ needs.setup.outputs.environment_url }}/health
-        max-attempts: 5
-        retry-delay: 10s
+        max-attempts: 30  # Increased from 5 to 30 for database download time
+        retry-delay: 30s  # Increased from 10s to 30s (total 15 minutes)
+    
+    - name: Check deployment readiness
+      id: readiness
+      run: |
+        echo "Checking if system is ready to serve requests..."
+        READY_URL="${{ needs.setup.outputs.environment_url }}/ready"
+        MAX_ATTEMPTS=60
+        ATTEMPT=1
+        
+        while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+          RESPONSE=$(curl -s "$READY_URL" || echo '{}')
+          
+          if echo "$RESPONSE" | grep -q '"ready":true'; then
+            echo "✅ System is ready!"
+            echo "Response: $RESPONSE"
+            exit 0
+          elif echo "$RESPONSE" | grep -q '"status":"downloading"'; then
+            echo "⏳ Databases are downloading (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+            if echo "$RESPONSE" | grep -q '"details"'; then
+              DETAILS=$(echo "$RESPONSE" | sed -n 's/.*"details":"\([^"]*\)".*/\1/p')
+              [ -n "$DETAILS" ] && echo "   Status: $DETAILS"
+            fi
+          else
+            echo "⏳ Waiting for system to be ready (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+          fi
+          
+          sleep 10
+          ATTEMPT=$((ATTEMPT + 1))
+        done
+        
+        echo "❌ System did not become ready after $MAX_ATTEMPTS attempts"
+        exit 1
