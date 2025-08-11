@@ -7,11 +7,15 @@ set -e
 echo "🚀 GeoIP API Deployment Setup"
 echo "=============================="
 
-# Get the directory where the script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_DIR="$SCRIPT_DIR/docker-api"
-
-cd "$PROJECT_DIR"
+# When this script is called from docker-deploy.sh, we're already in api-server directory
+# If called directly, we need to navigate to api-server
+if [ "$(basename "$PWD")" != "api-server" ]; then
+    # Get the directory where the script is located
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    # The api-server directory is one level up from deploy, then into api-server
+    PROJECT_DIR="$(dirname "$SCRIPT_DIR")/api-server"
+    cd "$PROJECT_DIR"
+fi
 
 # Ensure secrets directory exists
 echo "📁 Creating secrets directory..."
