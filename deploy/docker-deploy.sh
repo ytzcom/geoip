@@ -105,9 +105,9 @@ fi
 log_info "Current commit: $(git rev-parse --short HEAD) - $(git log -1 --pretty=%B | head -1)"
 
 # Create secrets directory if it doesn't exist
-if [ ! -d "infrastructure/docker-api/secrets" ]; then
+if [ ! -d "api-server/secrets" ]; then
     log_info "Creating secrets directory..."
-    mkdir -p infrastructure/docker-api/secrets
+    mkdir -p api-server/secrets
 fi
 
 # Detect the appropriate user/group for file ownership
@@ -126,7 +126,7 @@ if [ -d "$DEPLOY_DIR" ]; then
 fi
 
 # Handle .env file
-cd infrastructure/docker-api
+cd api-server
 
 if [ -n "$DOTENV_TOKEN" ]; then
     # Always try to fetch from dotenv.ca when token is available
@@ -244,17 +244,17 @@ else
 fi
 
 # Run deployment setup script
-if [ -f "../docker-deploy-setup.sh" ]; then
+if [ -f "../deploy/docker-deploy-setup.sh" ]; then
     log_info "Running deployment setup..."
     if [ "$EUID" -ne 0 ]; then
         # Not running as root, use sudo
-        sudo bash ../docker-deploy-setup.sh || {
+        sudo bash ../deploy/docker-deploy-setup.sh || {
             log_error "Deployment setup failed"
             exit 1
         }
     else
         # Already root
-        bash ../docker-deploy-setup.sh || {
+        bash ../deploy/docker-deploy-setup.sh || {
             log_error "Deployment setup failed"
             exit 1
         }
