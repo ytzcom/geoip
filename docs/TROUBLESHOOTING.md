@@ -569,7 +569,7 @@ When reporting issues, include:
 - Recent changes to the system
 
 ### Community Resources
-- [GitHub Issues](https://github.com/ytzcom/geoip-updater/issues) - Bug reports and feature requests
+- [GitHub Issues](https://github.com/ytzcom/geoip/issues) - Bug reports and feature requests
 - [Security Issues](mailto:security@example.com) - Private security vulnerability reports
 
 ---

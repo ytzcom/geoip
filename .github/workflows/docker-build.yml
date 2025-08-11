@@ -171,7 +171,7 @@ jobs:
             org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.vendor=YTZ
             org.opencontainers.image.category=${{ matrix.category }}
-            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip-updater/blob/main/${{ matrix.category == 'api' && 'api-server' || matrix.category == 'scripts' && 'docker-scripts' || 'cli/python' }}/README.md
+            org.opencontainers.image.documentation=https://github.com/ytzcom/geoip/blob/main/${{ matrix.category == 'api' && 'api-server' || matrix.category == 'scripts' && 'docker-scripts' || 'cli/python' }}/README.md
             maintainer=YTZ
 
       - name: Build and push Docker image
