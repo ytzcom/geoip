@@ -19,50 +19,97 @@ Main workflow for downloading and updating GeoIP databases from MaxMind and IP2L
 - Failure notifications (Slack, GitHub Issues)
 
 ### docker-build.yml
-Automated Docker image building and publishing to Docker Hub.
+CI/CD workflow for Docker images (development and continuous integration).
 
 **Triggers:**
 - Push to main branch
-- Git tags (v*)
 - Pull requests (build only, no push)
 - Manual dispatch
 - Weekly schedule for security updates
 
 **Images Built:**
-1. `ytzcom/geoip-updater` - Python CLI version
-2. `ytzcom/geoip-updater-cron` - Secure cron with supercronic
-3. `ytzcom/geoip-updater-k8s` - Kubernetes optimized
-4. `ytzcom/geoip-updater-go` - Minimal Go binary
+1. `ytzcom/geoip-scripts` - Scripts-only image for Docker integration
+2. `ytzcom/geoip-updater` - Python CLI version
+3. `ytzcom/geoip-updater-cron` - Secure cron with supercronic
+4. `ytzcom/geoip-updater-k8s` - Kubernetes optimized
+5. `ytzcom/geoip-updater-go` - Minimal Go binary
+6. `ytzcom/geoip-api` - FastAPI server with S3 backend
+7. `ytzcom/geoip-api-nginx` - Production server with Nginx
+8. `ytzcom/geoip-api-dev` - Development server with debug features
 
 **Features:**
 - Multi-platform builds (linux/amd64, linux/arm64)
 - Vulnerability scanning with Trivy
-- Image signing with Cosign
 - SBOM generation
 - Automated Docker Hub description updates
 - Build caching for faster builds
+- Development tags (latest, pr-*, weekly)
 
-### release-go-binaries.yml
-Build and release Go binaries for multiple platforms.
+### release.yml
+Unified release workflow for production releases with both Docker images and Go binaries.
 
 **Triggers:**
-- Git tags (v*, go-v*)
+- Git tags (v*)
 - Manual dispatch with version input
 
-**Platforms:**
+**Docker Images:**
+All 8 Docker images are built, signed, and pushed with version tags:
+- Keyless signing with Cosign (GitHub OIDC)
+- SBOM generation for supply chain security
+- Vulnerability scanning with Trivy
+- Multi-platform support (linux/amd64, linux/arm64)
+
+**Go Binaries:**
+Cross-platform compilation for 9 targets:
 - Linux (amd64, arm64, arm/v7)
 - macOS (amd64, arm64)
 - Windows (amd64, arm64)
 - FreeBSD (amd64)
 
 **Features:**
-- Cross-platform compilation
+- Unified release with all artifacts
 - Automatic GitHub release creation
 - Checksum generation (SHA256, MD5)
 - Binary compression (.gz, .tar.gz)
 - Post-release testing on major platforms
+- Smart release detection (preserves manual release notes)
 
-See [RELEASE.md](RELEASE.md) for detailed release process.
+See [docs/RELEASE_PROCESS.md](../../docs/RELEASE_PROCESS.md) for detailed release process.
+
+### deploy.yml
+Unified deployment workflow supporting both manual triggers and workflow calls.
+
+**Triggers:**
+- Manual dispatch (GitHub UI)
+- Workflow call (from other workflows)
+
+**Features:**
+- Deploy to single or multiple hosts
+- SSH-based deployment with key authentication
+- Environment management (production, staging, manual)
+- Health check validation after deployment
+- Support for both direct invocation and reuse by other workflows
+
+**Parameters:**
+- `deploy_host/deploy_hosts`: Target server(s) for deployment
+- `deploy_user`: SSH username (defaults to repository variable)
+- `deploy_port`: SSH port (defaults to repository variable)
+- `deploy_branch`: Branch to deploy (defaults to current/main)
+- `environment_name`: GitHub environment (manual-deployment/production)
+- `environment_url`: URL for health checks
+
+### docker-cleanup.yml
+Automated cleanup of old Docker Hub tags.
+
+**Triggers:**
+- Weekly schedule (Sundays at 2 AM UTC)
+- Manual dispatch
+
+**Features:**
+- Removes PR tags older than 30 days
+- Cleans up SHA tags from old builds
+- Preserves version tags and important branches
+- Dry-run mode for safety
 
 ## Required Secrets
 
@@ -73,9 +120,13 @@ See [RELEASE.md](RELEASE.md) for detailed release process.
 - `IP2LOCATION_TOKEN` - IP2Location download token
 - `SLACK_WEBHOOK_URL` - (Optional) Slack webhook for notifications
 
-### For docker-build.yml:
+### For docker-build.yml and release.yml:
 - `DOCKERHUB_USERNAME` - Docker Hub username
 - `DOCKERHUB_PASSWORD` - Docker Hub access token (not password)
+
+### For deploy.yml:
+- `DEPLOY_KEY` - SSH private key for deployment
+- `DOTENV_TOKEN` - (Optional) Token for environment configuration
 
 ## Required Variables
 
@@ -84,6 +135,10 @@ See [RELEASE.md](RELEASE.md) for detailed release process.
 - `AWS_REGION` - AWS region (default: us-east-1)
 - `MAXMIND_ACCOUNT_ID` - MaxMind account ID
 - `CREATE_ISSUE_ON_FAILURE` - Create GitHub issue on failure (true/false)
+
+### For deploy.yml:
+- `DEPLOY_USER` - Default SSH username for deployments
+- `DEPLOY_PORT` - Default SSH port for deployments
 
 ## Setup Instructions
 
@@ -111,7 +166,16 @@ MAXMIND_LICENSE_KEY=your-license-key
 IP2LOCATION_TOKEN=your-token
 ```
 
-### 4. Optional Notifications
+### 4. Configure Deployment
+```bash
+# Generate SSH key pair for deployment
+ssh-keygen -t ed25519 -f deploy_key -N ""
+
+# Add private key to GitHub secrets as DEPLOY_KEY
+# Add public key to authorized_keys on target servers
+```
+
+### 5. Optional Notifications
 ```bash
 # Slack webhook for failure notifications
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
@@ -128,12 +192,36 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
    - Enable debug logging: Yes/No
 5. Click "Run workflow"
 
-### Build Docker Images
+### Build Docker Images (CI/CD)
 1. Go to Actions tab
-2. Select "Build and Push Docker Images"
+2. Select "Docker CI/CD"
 3. Click "Run workflow"
 4. Configure options:
    - Force rebuild without cache: Yes/No
+5. Click "Run workflow"
+
+### Create Release
+1. **Method 1: Tag Push**
+   ```bash
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+
+2. **Method 2: Manual Dispatch**
+   - Go to Actions → "Unified Release"
+   - Click "Run workflow"
+   - Enter version (e.g., v1.2.3)
+   - Run workflow
+
+### Deploy to Production
+1. Go to Actions tab
+2. Select "Deploy Workflow"
+3. Click "Run workflow"
+4. Configure:
+   - Target host(s): server.example.com
+   - SSH user: deploy
+   - SSH port: 22
+   - Branch to deploy: main
 5. Click "Run workflow"
 
 ## Monitoring
@@ -147,6 +235,11 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 - Check Docker Hub for latest images
 - Review vulnerability scan results in Security tab
 - Monitor Dependabot for base image updates
+
+### Release Status
+- Check Releases page for all artifacts
+- Verify checksums for Go binaries
+- Confirm Docker image signatures with Cosign
 
 ## Troubleshooting
 
@@ -196,6 +289,24 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 - **OIDC token issues**: Ensure workflow has `id-token: write` permission
 - **Network access**: Cosign needs access to Sigstore infrastructure
 - **Only works on**: Push events and releases, not PRs
+
+#### 6. Release Asset Upload Fails (422 Error)
+- **Duplicate assets**: Asset with same name already exists
+  - Solution: Fixed by using specific glob patterns to avoid duplicates
+- **Re-running workflows**: May encounter conflicts with existing assets
+- **File patterns**: Ensure no overlapping glob patterns in release configuration
+
+#### 7. Trivy Scan Upload Fails
+- **Missing permissions**: Ensure workflow has `security-events: write` permission
+- **SARIF upload**: Required for GitHub code scanning integration
+- **Token access**: Verify GITHUB_TOKEN has appropriate permissions
+
+#### 8. Deployment Fails
+- **SSH key issues**:
+  - Verify DEPLOY_KEY secret is correctly formatted
+  - Ensure public key is in authorized_keys on target server
+- **Port access**: Confirm SSH port is accessible from GitHub Actions
+- **Directory permissions**: Deploy user needs write access to deployment directory
 
 ### Debug Mode
 
@@ -247,13 +358,22 @@ Enable debug logging in workflows:
    - Use access tokens, not passwords
    - Rotate credentials regularly
    - Review security alerts
+   - Keep permissions minimal (principle of least privilege)
 
 2. **Performance**
    - Use build caching
    - Optimize Dockerfiles
    - Monitor workflow duration
+   - Leverage parallel matrix builds
 
 3. **Reliability**
    - Set up notifications
    - Monitor failure rates
    - Test changes in PRs first
+   - Use retry logic for network operations
+
+4. **Releases**
+   - Follow semantic versioning (v1.2.3)
+   - Document changes in CHANGELOG
+   - Test releases in staging first
+   - Verify all artifacts post-release

@@ -9,7 +9,6 @@ on:
       version:
         description: 'Version to release (e.g., v1.0.0)'
         required: true
-        default: 'v1.0.0'
 
 permissions:
   contents: write
@@ -600,7 +599,10 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            release/geoip-updater-*
+            release/geoip-updater-linux-*
+            release/geoip-updater-darwin-*
+            release/geoip-updater-windows-*
+            release/geoip-updater-freebsd-*
             release/checksums-*.txt
             release/*-sbom.spdx.json
         env:

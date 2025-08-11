@@ -1,6 +1,40 @@
-name: Reusable Deploy Workflow
+name: Deploy Workflow
 
 on:
+  # Allow manual triggering via GitHub UI
+  workflow_dispatch:
+    inputs:
+      deploy_host:
+        description: 'Target host(s) to deploy to (comma-separated for multiple hosts)'
+        required: true
+        type: string
+      deploy_user:
+        description: 'SSH username for deployment'
+        required: false
+        type: string
+        default: ''
+      deploy_port:
+        description: 'SSH port for deployment'
+        required: false
+        type: string
+        default: ''
+      deploy_branch:
+        description: 'Branch to deploy'
+        required: false
+        type: string
+        default: ''
+      environment_name:
+        description: 'GitHub environment name'
+        required: false
+        type: string
+        default: 'manual-deployment'
+      environment_url:
+        description: 'Environment URL (for health check)'
+        required: false
+        type: string
+        default: 'https://geoipdb.net'
+
+  # Allow calling from other workflows
   workflow_call:
     inputs:
       deploy_hosts:
@@ -42,12 +76,57 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      deploy_hosts: ${{ steps.normalize.outputs.deploy_hosts }}
+      deploy_user: ${{ steps.normalize.outputs.deploy_user }}
+      deploy_port: ${{ steps.normalize.outputs.deploy_port }}
+      deploy_branch: ${{ steps.normalize.outputs.deploy_branch }}
+      environment_name: ${{ steps.normalize.outputs.environment_name }}
+      environment_url: ${{ steps.normalize.outputs.environment_url }}
     steps:
+    - name: Normalize inputs
+      id: normalize
+      run: |
+        # Handle both workflow_dispatch (single underscore) and workflow_call (plural with s)
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # Manual trigger - use workflow_dispatch inputs
+          DEPLOY_HOSTS="${{ inputs.deploy_host }}"
+          DEPLOY_USER="${{ inputs.deploy_user || vars.DEPLOY_USER }}"
+          DEPLOY_PORT="${{ inputs.deploy_port || vars.DEPLOY_PORT }}"
+          DEPLOY_BRANCH="${{ inputs.deploy_branch || github.ref_name }}"
+          ENVIRONMENT_NAME="${{ inputs.environment_name }}"
+          ENVIRONMENT_URL="${{ inputs.environment_url }}"
+        else
+          # Workflow call - use workflow_call inputs
+          DEPLOY_HOSTS="${{ inputs.deploy_hosts }}"
+          DEPLOY_USER="${{ inputs.deploy_user }}"
+          DEPLOY_PORT="${{ inputs.deploy_port }}"
+          DEPLOY_BRANCH="${{ inputs.deploy_branch }}"
+          ENVIRONMENT_NAME="${{ inputs.environment_name }}"
+          ENVIRONMENT_URL="${{ inputs.environment_url }}"
+        fi
+        
+        # Output normalized values
+        echo "deploy_hosts=$DEPLOY_HOSTS" >> $GITHUB_OUTPUT
+        echo "deploy_user=$DEPLOY_USER" >> $GITHUB_OUTPUT
+        echo "deploy_port=$DEPLOY_PORT" >> $GITHUB_OUTPUT
+        echo "deploy_branch=$DEPLOY_BRANCH" >> $GITHUB_OUTPUT
+        echo "environment_name=$ENVIRONMENT_NAME" >> $GITHUB_OUTPUT
+        echo "environment_url=$ENVIRONMENT_URL" >> $GITHUB_OUTPUT
+        
+        # Debug output
+        echo "Event: ${{ github.event_name }}"
+        echo "Deploy hosts: $DEPLOY_HOSTS"
+        echo "Deploy user: $DEPLOY_USER"
+        echo "Deploy port: $DEPLOY_PORT"
+        echo "Deploy branch: $DEPLOY_BRANCH"
+        echo "Environment: $ENVIRONMENT_NAME"
+        echo "URL: $ENVIRONMENT_URL"
+    
     - name: Convert hosts to matrix
       id: set-matrix
       run: |
         # Convert comma-separated hosts to JSON array
-        HOSTS="${{ inputs.deploy_hosts }}"
+        HOSTS="${{ steps.normalize.outputs.deploy_hosts }}"
         if [[ "$HOSTS" == *","* ]]; then
           # Multiple hosts - split by comma and create JSON array
           JSON_ARRAY=$(echo "$HOSTS" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
@@ -63,8 +142,8 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     environment:
-      name: ${{ inputs.environment_name }}
-      url: ${{ inputs.environment_url }}
+      name: ${{ needs.setup.outputs.environment_name }}
+      url: ${{ needs.setup.outputs.environment_url }}
 
     strategy:
       matrix:
@@ -75,9 +154,9 @@ jobs:
       uses: appleboy/ssh-action@v1.0.0
       with:
         host: ${{ matrix.host }}
-        username: ${{ inputs.deploy_user }}
+        username: ${{ needs.setup.outputs.deploy_user }}
         key: ${{ secrets.DEPLOY_KEY }}
-        port: ${{ inputs.deploy_port }}
+        port: ${{ needs.setup.outputs.deploy_port }}
         script: |
           set -e
 
@@ -86,7 +165,7 @@ jobs:
           # Export environment variables for the deployment script
           export DEPLOY_DIR="/data/sites/live_projects/geoip-api"
           export REPO_URL="git@github.com:${{ github.repository }}.git"
-          export BRANCH="${{ inputs.deploy_branch }}"
+          export BRANCH="${{ needs.setup.outputs.deploy_branch }}"
           export DOTENV_TOKEN="${{ secrets.DOTENV_TOKEN }}"
           export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
           export DOCKERHUB_PASSWORD="${{ secrets.DOCKERHUB_PASSWORD }}"
@@ -114,12 +193,12 @@ jobs:
   check-deployment:
     name: Check Deployment Health
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: [setup, deploy]
 
     steps:
     - name: Check deployment health
       uses: jtalk/url-health-check-action@v4
       with:
-        url: ${{ inputs.environment_url }}/health
+        url: ${{ needs.setup.outputs.environment_url }}/health
         max-attempts: 5
         retry-delay: 10s
