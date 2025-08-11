@@ -293,6 +293,45 @@ docker compose -f "$COMPOSE_FILE" --env-file secrets/.env up -d || {
     exit 1
 }
 
+# Function to check if databases are being downloaded
+check_database_download_status() {
+    local container_name="geoip-api"
+    local status="unknown"
+    
+    # Check recent logs for download indicators
+    local logs=$(docker logs --tail=20 "$container_name" 2>&1 || echo "")
+    
+    if echo "$logs" | grep -q "Databases not found, downloading from S3"; then
+        status="downloading"
+    elif echo "$logs" | grep -q "Downloaded.*databases"; then
+        status="complete"
+    elif echo "$logs" | grep -q "Successfully downloaded.*bytes"; then
+        status="downloading"
+    elif echo "$logs" | grep -q "GeoIP databases loaded"; then
+        status="ready"
+    elif echo "$logs" | grep -q "Failed to download databases"; then
+        status="failed"
+    fi
+    
+    echo "$status"
+}
+
+# Function to monitor download progress
+monitor_download_progress() {
+    local container_name="geoip-api"
+    local last_progress=""
+    
+    # Get the last download progress message from logs
+    local progress=$(docker logs --tail=50 "$container_name" 2>&1 | \
+        grep -E "(Downloaded.*bytes|Downloading.*database|Successfully downloaded)" | \
+        tail -1 || echo "")
+    
+    if [ -n "$progress" ] && [ "$progress" != "$last_progress" ]; then
+        log_info "Progress: $progress"
+        last_progress="$progress"
+    fi
+}
+
 # Wait for containers to be healthy
 log_info "Waiting for containers to be healthy..."
 sleep 10
@@ -301,28 +340,89 @@ sleep 10
 log_info "Checking container status..."
 docker compose -f "$COMPOSE_FILE" --env-file secrets/.env ps
 
-# Health check
-log_info "Performing health check..."
+# Health check with database download monitoring
+log_info "Performing health check (this may take several minutes if databases are downloading)..."
 HEALTH_CHECK_URL="http://localhost/health"
-MAX_ATTEMPTS=30
+READY_CHECK_URL="http://localhost/ready"
+MAX_ATTEMPTS=180  # Increased from 30 to 180 (6 minutes total with 2s delays)
 ATTEMPT=1
+DOWNLOAD_STATUS="unknown"
+LAST_STATUS_CHECK=0
+SYSTEM_READY=false
 
 while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+    # Check health endpoint first
     if curl -fs "$HEALTH_CHECK_URL" > /dev/null; then
-        log_info "Health check passed!"
-        break
+        # System is healthy, now check readiness
+        READY_RESPONSE=$(curl -s "$READY_CHECK_URL" 2>/dev/null || echo '{}')
+        
+        # Try to parse the JSON response
+        if echo "$READY_RESPONSE" | grep -q '"ready":true'; then
+            SYSTEM_READY=true
+            log_info "System is healthy and ready to serve requests!"
+            break
+        elif echo "$READY_RESPONSE" | grep -q '"status":"downloading"'; then
+            # System is downloading databases
+            if [ $((ATTEMPT % 10)) -eq 0 ]; then
+                log_info "System is healthy but databases are still downloading (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+                
+                # Extract details from readiness response if available
+                if echo "$READY_RESPONSE" | grep -q '"details"'; then
+                    DETAILS=$(echo "$READY_RESPONSE" | sed -n 's/.*"details":"\([^"]*\)".*/\1/p')
+                    [ -n "$DETAILS" ] && log_info "Status: $DETAILS"
+                fi
+                
+                # Also check Docker logs for progress
+                monitor_download_progress
+            fi
+        elif echo "$READY_RESPONSE" | grep -q '"status":"degraded"'; then
+            # System is degraded but may be able to serve some requests
+            if [ $((ATTEMPT % 10)) -eq 0 ]; then
+                log_warn "System is in degraded state (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+                DETAILS=$(echo "$READY_RESPONSE" | sed -n 's/.*"details":"\([^"]*\)".*/\1/p')
+                [ -n "$DETAILS" ] && log_warn "Details: $DETAILS"
+            fi
+        else
+            # Check Docker logs for more info
+            DOWNLOAD_STATUS=$(check_database_download_status)
+            if [ "$DOWNLOAD_STATUS" = "downloading" ]; then
+                if [ $((ATTEMPT % 10)) -eq 0 ]; then
+                    log_info "Databases are being downloaded from S3, please wait..."
+                    monitor_download_progress
+                fi
+            elif [ "$DOWNLOAD_STATUS" = "failed" ]; then
+                log_error "Database download failed!"
+                docker logs --tail=50 geoip-api | grep -i error
+                exit 1
+            fi
+        fi
     else
-        log_warn "Health check attempt $ATTEMPT/$MAX_ATTEMPTS failed, retrying..."
-        sleep 2
-        ATTEMPT=$((ATTEMPT + 1))
+        # Health check failed, show status every 10 attempts
+        if [ $((ATTEMPT % 10)) -eq 0 ]; then
+            log_warn "Health check attempt $ATTEMPT/$MAX_ATTEMPTS failed, system may be starting up..."
+            
+            # Check if databases are downloading from Docker logs
+            DOWNLOAD_STATUS=$(check_database_download_status)
+            if [ "$DOWNLOAD_STATUS" = "downloading" ]; then
+                log_info "Databases are being downloaded from S3, please wait..."
+                monitor_download_progress
+            fi
+        fi
     fi
+    
+    sleep 2
+    ATTEMPT=$((ATTEMPT + 1))
 done
 
 if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-    log_error "Health check failed after $MAX_ATTEMPTS attempts"
+    log_error "Health check failed after $MAX_ATTEMPTS attempts ($(($MAX_ATTEMPTS * 2)) seconds)"
     echo ""
     echo "Debug information:"
-    docker compose -f "$COMPOSE_FILE" --env-file secrets/.env logs --tail=50
+    echo "Container status:"
+    docker compose -f "$COMPOSE_FILE" --env-file secrets/.env ps
+    echo ""
+    echo "Recent logs:"
+    docker compose -f "$COMPOSE_FILE" --env-file secrets/.env logs --tail=100
     exit 1
 fi
 
