@@ -150,6 +150,7 @@
                     <textarea 
                         x-model="ips" 
                         @keyup.ctrl.enter="queryIPs()"
+                        @input.debounce.500ms="updateURLWithIPs()"
                         placeholder="Enter IP addresses...&#10;e.g., 8.8.8.8&#10;1.1.1.1&#10;or 8.8.8.8, 1.1.1.1"
                         class="w-full h-32 px-4 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
                         :class="{'opacity-50': loading}"></textarea>
@@ -543,6 +544,25 @@
                 }
             },
             
+            updateURLWithIPs() {
+                // Parse IPs from textarea
+                const ipList = this.ips
+                    .split(/[,\n]/)
+                    .map(ip => ip.trim())
+                    .filter(Boolean);
+                
+                // Update URL without reloading the page
+                const url = new URL(window.location);
+                if (ipList.length > 0) {
+                    url.searchParams.set('ips', ipList.join(','));
+                } else {
+                    url.searchParams.delete('ips');
+                }
+                
+                // Update browser history without reload
+                window.history.replaceState({}, '', url);
+            },
+            
             async queryIPs() {
                 if (!this.ips.trim()) return;
                 
@@ -561,6 +581,9 @@
                     this.loading = false;
                     return;
                 }
+                
+                // Update URL with current IPs
+                this.updateURLWithIPs();
                 
                 try {
                     const params = new URLSearchParams({
@@ -639,6 +662,7 @@
                 this.ips = '';
                 this.results = null;
                 this.stats = { total: 0, found: 0, notFound: 0, errors: 0 };
+                this.updateURLWithIPs(); // Clear the URL as well
             },
             
             renderOverviewTab(data) {
