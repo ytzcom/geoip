@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2025--12--29%2000:27:07%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2026--01--05%2000:27:33%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-7-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-3-purple)
@@ -60,9 +60,9 @@ Compressed archives are also available:
 | GeoIP2-Country | MaxMind | MMDB | 9MB | Country-level IP geolocation data |
 | GeoIP2-ISP | MaxMind | MMDB | 17MB | ISP and organization data |
 | GeoIP2-Connection-Type | MaxMind | MMDB | 11MB | Connection type data |
-| DB23 IPv4 | IP2Location | BIN | 629MB | Comprehensive IPv4 geolocation data |
-| DB23 IPv6 | IP2Location | BIN | 808MB | Comprehensive IPv6 geolocation data |
-| PX2 IPv4 | IP2Location | BIN | 298MB | IPv4 proxy detection data |
+| DB23 IPv4 | IP2Location | BIN | 628MB | Comprehensive IPv4 geolocation data |
+| DB23 IPv6 | IP2Location | BIN | 805MB | Comprehensive IPv6 geolocation data |
+| PX2 IPv4 | IP2Location | BIN | 323MB | IPv4 proxy detection data |
 
 ## 🔧 Usage Examples
 
@@ -204,4 +204,4 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 
 ---
 
-**Last Update:** 2025-12-29 00:27:07 UTC
+**Last Update:** 2026-01-05 00:27:33 UTC
