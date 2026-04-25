@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+# Note: Removed 'set -euo pipefail' to allow script to continue if individual downloads fail
 
 # Enable debug mode if requested
 if [ "${DEBUG_MODE:-false}" = "true" ]; then
@@ -30,7 +30,9 @@ download_ip2location_with_retry() {
             # Check file size to ensure it's not an error page
             if [ $(wc -c < "$output") -lt 1000 ]; then
                 echo "❌ Downloaded file is too small, likely an error"
-                return 1
+                attempt=$((attempt + 1))
+                [ $attempt -le $max_attempts ] && sleep 5
+                continue
             fi
             return 0
         else
@@ -84,12 +86,12 @@ else
     done
 fi
 
-# Check if any downloads failed
+# Check if any downloads failed and warn, but don't exit with error
 if [ -f download_errors.txt ]; then
-    echo "❌ Some IP2Location downloads failed:"
+    echo "⚠️  Some IP2Location downloads failed:"
     cat download_errors.txt
     rm -f download_errors.txt
-    exit 1
+    echo "Continuing with available databases..."
+else
+    echo "✅ All IP2Location databases downloaded successfully"
 fi
-
-echo "✅ All IP2Location databases downloaded successfully"
