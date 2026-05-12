@@ -2,7 +2,7 @@
 # Ultra-minimal image containing just the scripts needed for integration
 
 # Stage 1: Build Go binaries for multiple architectures
-FROM golang:1.21-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
 
 WORKDIR /build
 
