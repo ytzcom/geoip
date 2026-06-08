@@ -448,46 +448,93 @@ class GeoIPUpdater:
             return False
     
     async def download_database(self, name: str, url: str) -> bool:
-        """Download a single database file."""
+        """Download a single database file.
+
+        Resumes on interruption/stall (HTTP Range) instead of restarting from
+        byte 0, so large databases complete on flaky links. Retries while the
+        transfer keeps making progress; gives up only after a few consecutive
+        no-progress attempts. The session's sock_read timeout aborts a stalled
+        read so this loop can resume it.
+        """
         temp_file = self.temp_dir / name
         target_file = self.config.target_dir / name
-        
+
         logger.info(f"Downloading: {name}")
-        
-        for attempt in range(self.config.max_retries):
+        if temp_file.exists():
+            temp_file.unlink()  # fresh start for this database
+
+        max_no_progress = 3
+        hard_cap = 50
+        no_progress = 0
+        attempt = 0
+        success = False
+
+        while True:
+            attempt += 1
+            if attempt > hard_cap:
+                logger.error(f"{name}: giving up after {hard_cap} attempts")
+                break
+
+            offset = temp_file.stat().st_size if temp_file.exists() else 0
+            headers = {}
+            if offset > 0:
+                headers['Range'] = f'bytes={offset}-'
+                logger.info(f"Resuming {name} from {offset:,} bytes (attempt {attempt})")
+
             try:
-                async with self.session.get(url) as response:
-                    if response.status == 200:
-                        # Download to temporary file
-                        with open(temp_file, 'wb') as f:
-                            async for chunk in response.content.iter_chunked(8192):
-                                f.write(chunk)
-                        
-                        # Validate file
-                        if not self.validate_database_file(temp_file, name):
-                            raise Exception("Downloaded file failed validation")
-                        
-                        file_size = temp_file.stat().st_size
-                        
-                        # Move to target location (atomic on same filesystem)
-                        shutil.move(str(temp_file), str(target_file))
-                        
-                        logger.info(f"Successfully downloaded: {name} ({file_size:,} bytes)")
-                        self.downloaded_files.add(name)
-                        return True
+                async with self.session.get(url, headers=headers) as response:
+                    status = response.status
+                    if status in (401, 403):
+                        logger.error(f"{name}: access denied (HTTP {status}) - the download URL "
+                                     f"may have expired; re-run to refresh URLs")
+                        self.failed_files.add(name)
+                        return False
+                    if status == 416:
+                        # Range not satisfiable -> we already have the whole file
+                        success = True
+                        break
+                    if status == 206:
+                        mode = 'ab'  # resuming, append
+                    elif status == 200:
+                        mode = 'wb'  # full body (server ignored any Range)
                     else:
-                        logger.warning(f"Download failed for {name}: HTTP {response.status}")
-                
+                        raise Exception(f"HTTP {status}")
+
+                    with open(temp_file, mode) as f:
+                        async for chunk in response.content.iter_chunked(65536):
+                            f.write(chunk)
+                # Stream read to EOF without error -> file is complete
+                success = True
+                break
+
             except Exception as e:
-                logger.warning(f"Error downloading {name} on attempt {attempt + 1}: {e}")
-            
-            if attempt < self.config.max_retries - 1:
-                delay = min(2 ** attempt, 60)
-                await asyncio.sleep(delay)
-        
-        logger.error(f"Failed to download {name} after {self.config.max_retries} attempts")
-        self.failed_files.add(name)
-        return False
+                cur = temp_file.stat().st_size if temp_file.exists() else 0
+                if cur > offset:
+                    no_progress = 0
+                    logger.warning(f"{name}: transfer interrupted at {cur:,} bytes - resuming ({e})")
+                else:
+                    no_progress += 1
+                    logger.warning(f"{name}: no progress (attempt {no_progress}/{max_no_progress}): {e}")
+                    if no_progress >= max_no_progress:
+                        break
+                    await asyncio.sleep(5)
+
+        if not success:
+            logger.error(f"Failed to download {name}")
+            self.failed_files.add(name)
+            return False
+
+        # Validate and move into place
+        if not self.validate_database_file(temp_file, name):
+            logger.error(f"Downloaded file failed validation: {name}")
+            self.failed_files.add(name)
+            return False
+
+        file_size = temp_file.stat().st_size
+        shutil.move(str(temp_file), str(target_file))
+        logger.info(f"Successfully downloaded: {name} ({file_size:,} bytes)")
+        self.downloaded_files.add(name)
+        return True
     
     async def update_databases(self):
         """Main update process."""
