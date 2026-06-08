@@ -148,7 +148,7 @@ runs:
 
     - name: Check database cache
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ inputs.path }}
         key: ${{ env.DB_CACHE_KEY }}
@@ -156,7 +156,7 @@ runs:
 
     - name: Check binary cache
       id: binary-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ./geoip-binary
         key: ${{ env.BINARY_CACHE_KEY }}
@@ -243,7 +243,7 @@ runs:
 
     - name: Save binary to cache
       if: steps.binary-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         path: ./geoip-binary
         key: ${{ env.BINARY_CACHE_KEY }}
@@ -329,7 +329,7 @@ runs:
 
     - name: Save databases to cache
       if: steps.cache.outputs.cache-hit != 'true' && steps.go-binary.outcome == 'success'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         path: ${{ inputs.path }}
         key: ${{ env.DB_CACHE_KEY }}
