@@ -15,7 +15,7 @@
 #   --databases LIST     Comma-separated list of databases or "all" (default: all)
 #   --config FILE        Read configuration from YAML file
 #   --max-retries N      Maximum retry attempts (default: 3)
-#   --timeout SECONDS    Request timeout in seconds (default: 300)
+#   --timeout SECONDS    Overall download ceiling in seconds (default: 1800; aborts early only if a transfer stalls)
 #   --quiet              Suppress output
 #   --verbose            Enable verbose output
 #   --log-file FILE      Log output to file
@@ -39,7 +39,7 @@ TARGET_DIR="${GEOIP_TARGET_DIR:-.}"
 DATABASES="${GEOIP_DATABASES:-all}"
 CONFIG_FILE=""
 MAX_RETRIES=3
-TIMEOUT=300
+TIMEOUT=1800  # overall ceiling; stall detection is the real guard
 QUIET_MODE=false
 VERBOSE_MODE=false
 LOG_FILE=""
@@ -47,8 +47,9 @@ VALIDATE_ONLY=false
 CHECK_NAMES_MODE=false
 VALIDATE_ONLY_MODE=false
 
-# Parallel download settings
-MAX_PARALLEL=4
+# Parallel download settings. Default 2 (was 4): fewer streams give each large
+# file more of a bandwidth-bound pipe. Override via GEOIP_CONCURRENT.
+MAX_PARALLEL="${GEOIP_CONCURRENT:-2}"
 TEMP_DIR=""
 
 # Color codes (disabled if not interactive or quiet)
@@ -117,7 +118,7 @@ Options:
     --databases LIST     Comma-separated list of databases or "all" (default: all)
     --config FILE        Read configuration from YAML file
     --max-retries N      Maximum retry attempts (default: 3)
-    --timeout SECONDS    Request timeout in seconds (default: 300)
+    --timeout SECONDS    Overall download ceiling in seconds (default: 1800; aborts early only if a transfer stalls)
     --quiet              Suppress output
     --verbose            Enable verbose output
     --log-file FILE      Log output to file
@@ -354,6 +355,9 @@ http_request() {
         # Build curl command
         local curl_cmd="curl --silent --show-error --location"
         curl_cmd="$curl_cmd --max-time $TIMEOUT --connect-timeout 30"
+        # Stall detection: abort only if <1KB/s for 120s, so large databases
+        # finish on slow links rather than hitting the wall-clock ceiling.
+        curl_cmd="$curl_cmd --speed-limit 1024 --speed-time 120"
         curl_cmd="$curl_cmd --retry 0 --fail"
         
         if [ "$VERBOSE_MODE" = "true" ] && [ -n "$output_file" ]; then

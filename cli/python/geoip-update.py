@@ -88,8 +88,8 @@ else:
 DEFAULT_ENDPOINT = "https://geoipdb.net/auth"
 DEFAULT_TARGET_DIR = "./geoip"
 DEFAULT_RETRIES = 3
-DEFAULT_TIMEOUT = 300
-DEFAULT_MAX_CONCURRENT = 4
+DEFAULT_TIMEOUT = 1800  # overall ceiling; per-read stall timeout is the real guard
+DEFAULT_MAX_CONCURRENT = 2  # bandwidth-bound: fewer streams finish large files sooner
 LOCK_FILE = Path(tempfile.gettempdir()) / "geoip-update.lock"
 
 # Available databases for validation
@@ -272,7 +272,13 @@ class GeoIPUpdater:
     
     async def __aenter__(self):
         """Async context manager entry."""
-        timeout = aiohttp.ClientTimeout(total=self.config.timeout)
+        # total is a generous ceiling; sock_read is the stall guard (abort only
+        # if no data arrives for 120s), so large databases finish on slow links.
+        timeout = aiohttp.ClientTimeout(
+            total=self.config.timeout,
+            sock_connect=30,
+            sock_read=120,
+        )
         connector = aiohttp.TCPConnector(
             limit=self.config.max_concurrent,
             force_close=True,
@@ -851,8 +857,8 @@ async def check_database_names_command(config: Config):
 @click.option('-c', '--config', type=click.Path(exists=True), help='Configuration file (YAML)')
 @click.option('-l', '--log-file', type=click.Path(), help='Log file path')
 @click.option('-r', '--retries', type=int, help='Max retries (default: 3)')
-@click.option('-t', '--timeout', type=int, help='Download timeout in seconds (default: 300)')
-@click.option('--concurrent', type=int, help='Max concurrent downloads (default: 4)')
+@click.option('-t', '--timeout', type=int, help='Overall download ceiling in seconds (default: 1800; aborts early only on stall)')
+@click.option('--concurrent', type=int, help='Max concurrent downloads (default: 2)')
 @click.option('-q', '--quiet', is_flag=True, help='Quiet mode (no output except errors)')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
 @click.option('--no-lock', is_flag=True, help="Don't use lock file")

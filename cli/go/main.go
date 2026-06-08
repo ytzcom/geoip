@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,8 +29,8 @@ const (
 	defaultEndpoint   = "https://geoipdb.net/auth"
 	defaultTargetDir  = "./geoip"
 	defaultRetries    = 3
-	defaultTimeout    = 300
-	defaultConcurrent = 4
+	defaultTimeout    = 1800 // overall ceiling; downloadIdleTimeout is the stall guard
+	defaultConcurrent = 2    // bandwidth-bound: fewer streams finish large files sooner
 )
 
 // Config holds the application configuration
@@ -212,6 +213,34 @@ func isProcessRunning(pid int) bool {
 	}
 }
 
+// downloadIdleTimeout aborts a download whose body read stalls for this long.
+// This is a stall timeout, not an absolute deadline, so a slow-but-progressing
+// download of a large database is not killed mid-transfer.
+const downloadIdleTimeout = 120 * time.Second
+
+// idleTimeoutReader wraps a response body and cancels the request (via cancel)
+// if no data is read for idle. The timer is reset on every read that returns
+// bytes, so only a genuine stall trips it.
+type idleTimeoutReader struct {
+	rc    io.Reader
+	timer *time.Timer
+	idle  time.Duration
+}
+
+func newIdleTimeoutReader(rc io.Reader, idle time.Duration, cancel context.CancelFunc) *idleTimeoutReader {
+	return &idleTimeoutReader{rc: rc, idle: idle, timer: time.AfterFunc(idle, cancel)}
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	n, err := r.rc.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.idle)
+	}
+	return n, err
+}
+
+func (r *idleTimeoutReader) Stop() { r.timer.Stop() }
+
 // HTTPClient wraps http.Client with retry logic
 type HTTPClient struct {
 	client     *http.Client
@@ -222,14 +251,21 @@ type HTTPClient struct {
 func newHTTPClient(timeout time.Duration, maxRetries int, logger *Logger) *HTTPClient {
 	return &HTTPClient{
 		client: &http.Client{
+			// Generous overall ceiling. The per-read stall guard
+			// (downloadIdleTimeout) is what aborts a dead transfer; this just
+			// bounds a pathologically slow one. Connect/TLS/header are bounded
+			// explicitly below so removing a tight total timeout can't hang.
 			Timeout: timeout,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					MinVersion: tls.VersionTLS12,
 				},
-				MaxIdleConns:       100,
-				IdleConnTimeout:    90 * time.Second,
-				DisableCompression: false,
+				DialContext:           (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   15 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				DisableCompression:    false,
 			},
 		},
 		maxRetries: maxRetries,
@@ -357,8 +393,13 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 	tempFile := filepath.Join(g.tempDir, name)
 	targetFile := filepath.Join(g.config.TargetDir, name)
 
+	// Per-download cancellable context so a stalled body read can be aborted
+	// by the idle-timeout reader below (cancelling it unblocks resp.Body.Read).
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Create request with context
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {
 		return DownloadResult{Database: name, Error: fmt.Errorf("failed to create request: %w", err)}
 	}
@@ -377,8 +418,11 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 	}
 	defer out.Close()
 
-	// Copy data
-	size, err := io.Copy(out, resp.Body)
+	// Copy data through a stall guard: abort if no bytes arrive for
+	// downloadIdleTimeout (slow-but-progressing transfers are not affected).
+	body := newIdleTimeoutReader(resp.Body, downloadIdleTimeout, cancel)
+	defer body.Stop()
+	size, err := io.Copy(out, body)
 	if err != nil {
 		return DownloadResult{Database: name, Error: fmt.Errorf("failed to download: %w", err)}
 	}
