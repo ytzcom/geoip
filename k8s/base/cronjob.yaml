@@ -65,7 +65,7 @@ spec:
             # Option 1: Official Python image
             image: python:3.11-slim
             # Option 2: Pre-built Docker image
-            # image: your-registry/geoip-updater:latest
+            # image: ytzcom/geoip-updater:latest
             
             command: ["/bin/sh", "-c"]
             args:
@@ -184,7 +184,7 @@ spec:
           containers:
           - name: geoip-updater
             # Pre-built Go binary in scratch image
-            image: your-registry/geoip-updater-go:latest
+            image: ytzcom/geoip-updater-go:latest
             
             args:
               - "-quiet"

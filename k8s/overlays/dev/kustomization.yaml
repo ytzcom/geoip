@@ -5,7 +5,7 @@ namespace: geoip-dev
 
 # Base resources
 resources:
-  - ../../
+  - ../../base
 
 # Namespace override
 namePrefix: dev-
