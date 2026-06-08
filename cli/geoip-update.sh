@@ -410,7 +410,11 @@ http_request() {
         local response
         
         if [[ -n "$output_file" ]]; then
-            http_code=$(curl --write-out "%{http_code}" "${curl_opts[@]}" "$url" 2>&1)
+            # Capture only stdout (the write-out HTTP code). Do NOT merge stderr
+            # here: with --verbose the curl trace would otherwise pollute
+            # $http_code and break the "^2xx$" success check on file downloads.
+            # curl errors still surface on the terminal via --show-error.
+            http_code=$(curl --write-out "%{http_code}" "${curl_opts[@]}" "$url")
             curl_exit=$?
         else
             response=$(curl --write-out "\n%{http_code}" "${curl_opts[@]}" "$url" 2>&1)
