@@ -501,6 +501,79 @@ function Invoke-HttpRequest {
     Exit-WithError -Message "Failed after $MaxRetries attempts"
 }
 
+# Download $Url to $OutFile, resuming on interruption/stall via an HTTP Range
+# request instead of restarting from byte 0, so large databases complete on
+# flaky links. Retries while the transfer keeps making progress; gives up only
+# after a few consecutive no-progress attempts. Returns $true on success.
+function Invoke-ResumableDownload {
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        [Parameter(Mandatory)][string]$OutFile,
+        [int]$TimeoutSec = 1800
+    )
+
+    $maxNoProgress = 3
+    $hardCap = 50
+    $noProgress = 0
+    $attempt = 0
+    $leaf = Split-Path -Path $OutFile -Leaf
+    if (Test-Path -LiteralPath $OutFile) { Remove-Item -LiteralPath $OutFile -Force }
+
+    while ($true) {
+        $attempt++
+        if ($attempt -gt $hardCap) { return $false }
+
+        $offset = 0
+        if (Test-Path -LiteralPath $OutFile) { $offset = (Get-Item -LiteralPath $OutFile).Length }
+
+        $client = $null; $resp = $null; $stream = $null; $fs = $null
+        try {
+            $client = [System.Net.Http.HttpClient]::new()
+            $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
+            $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
+            if ($offset -gt 0) {
+                $req.Headers.Range = [System.Net.Http.Headers.RangeHeaderValue]::new($offset, $null)
+                Write-Host "Resuming $leaf from $offset bytes (attempt $attempt)"
+            }
+
+            $resp = $client.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            $code = [int]$resp.StatusCode
+            if ($code -eq 401 -or $code -eq 403) {
+                Write-Host "${leaf}: access denied (HTTP $code) - the download URL may have expired; re-run to refresh URLs"
+                return $false
+            }
+            if ($code -eq 416) { return $true }  # range past EOF => already complete
+            if ($code -ne 200 -and $code -ne 206) { throw "HTTP $code" }
+
+            $append = ($code -eq 206 -and $offset -gt 0)
+            $fsMode = if ($append) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
+            $fs = [System.IO.FileStream]::new($OutFile, $fsMode, [System.IO.FileAccess]::Write)
+            $stream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+            $stream.CopyTo($fs)
+            $fs.Dispose(); $stream.Dispose(); $resp.Dispose(); $client.Dispose()
+            return $true  # read through to EOF => complete
+        }
+        catch {
+            if ($fs) { $fs.Dispose() }
+            if ($stream) { $stream.Dispose() }
+            if ($resp) { $resp.Dispose() }
+            if ($client) { $client.Dispose() }
+
+            $cur = 0
+            if (Test-Path -LiteralPath $OutFile) { $cur = (Get-Item -LiteralPath $OutFile).Length }
+            if ($cur -gt $offset) {
+                $noProgress = 0
+                Write-Host "${leaf}: transfer interrupted at $cur bytes - resuming ($_)"
+            }
+            else {
+                $noProgress++
+                if ($noProgress -ge $maxNoProgress) { return $false }
+                Start-Sleep -Seconds 5
+            }
+        }
+    }
+}
+
 # Download database with progress
 function Start-DatabaseDownloadWithProgress {
     param(
@@ -526,13 +599,12 @@ function Start-DatabaseDownloadWithProgress {
                    -CurrentOperation "$Index of $Total databases"
     
     try {
-        # Download with progress tracking
-        $response = Invoke-WebRequest -Uri $Url -OutFile $tempFile `
-                                    -TimeoutSec $Timeout `
-                                    -ErrorAction Stop `
-                                    -UseBasicParsing `
-                                    -PassThru
-        
+        # Resumable download: continues a partial transfer instead of restarting
+        # from byte 0, so large databases complete on flaky links.
+        if (-not (Invoke-ResumableDownload -Url $Url -OutFile $tempFile -TimeoutSec $Timeout)) {
+            throw "Download failed (could not complete after retries)"
+        }
+
         # Validate downloaded file
         if ((Test-Path -Path $tempFile) -and (Get-Item -Path $tempFile).Length -gt 0) {
             $fileSize = (Get-Item -Path $tempFile).Length
@@ -623,21 +695,22 @@ function Start-DatabaseDownload {
     $targetFile = Join-Path $TargetDirectory $DatabaseName
     $tempFile = Join-Path $script:TempDirectory $DatabaseName
     
+    # Pass the resumable downloader's definition into the job's runspace.
+    $resumableFn = ${function:Invoke-ResumableDownload}.ToString()
+
     $job = Start-Job -ScriptBlock {
-        param($DatabaseName, $Url, $TempFile, $TargetFile, $MaxRetries, $Timeout)
-        
+        param($DatabaseName, $Url, $TempFile, $TargetFile, $Timeout, $ResumableFn)
+
+        # Re-create the resumable downloader inside this job's runspace.
+        ${function:Invoke-ResumableDownload} = [scriptblock]::Create($ResumableFn)
+
         try {
-            # Download to temporary file
-            $params = @{
-                Uri = $Url
-                OutFile = $TempFile
-                TimeoutSec = $Timeout
-                ErrorAction = 'Stop'
-                UseBasicParsing = $true
+            # Resumable download: continues a partial transfer instead of
+            # restarting from byte 0, so large databases complete on flaky links.
+            if (-not (Invoke-ResumableDownload -Url $Url -OutFile $TempFile -TimeoutSec $Timeout)) {
+                throw "Download failed (could not complete after retries)"
             }
-            
-            Invoke-WebRequest @params
-            
+
             # Verify and move file
             if ((Test-Path -Path $TempFile) -and (Get-Item -Path $TempFile).Length -gt 0) {
                 Move-Item -Path $TempFile -Destination $TargetFile -Force
@@ -658,7 +731,7 @@ function Start-DatabaseDownload {
                 Error = $_.ToString()
             }
         }
-    } -ArgumentList $DatabaseName, $Url, $tempFile, $targetFile, $MaxRetries, $Timeout
+    } -ArgumentList $DatabaseName, $Url, $tempFile, $targetFile, $Timeout, $resumableFn
     
     return $job
 }

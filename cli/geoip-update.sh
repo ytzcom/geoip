@@ -463,63 +463,129 @@ http_request() {
     error "Failed after $MAX_RETRIES attempts"
 }
 
-# Download a single database file
+# Cross-platform file size in bytes (0 if the file is missing)
+file_size_bytes() {
+    local f="$1"
+    [[ -f "$f" ]] || { echo 0; return; }
+    if command -v stat >/dev/null 2>&1; then
+        stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || ls -l "$f" 2>/dev/null | awk '{print $5}' || echo 0
+    else
+        ls -l "$f" 2>/dev/null | awk '{print $5}' || echo 0
+    fi
+}
+
+# Download a single database file, resuming on interruption/stall.
+#
+# Rather than restarting from byte 0 on every failure, this keeps the partial
+# temp file and resumes it (curl --continue-at -). It retries as long as the
+# transfer keeps making progress and only gives up after a few consecutive
+# no-progress attempts, so large databases complete even on flaky connections.
 download_database() {
     local db_name="$1"
     local url="$2"
     local target_file="$TARGET_DIR/$db_name"
     local temp_file="$TEMP_DIR/$db_name"
-    
+
     log INFO "Downloading: $db_name"
-    
-    # Download to temporary file
-    if http_request GET "$url" "$temp_file"; then
-        # Verify file was downloaded and has content
-        if [[ -f "$temp_file" ]] && [[ -s "$temp_file" ]]; then
-            # Get file size in a cross-platform way
-            local file_size
-            if command -v stat >/dev/null 2>&1; then
-                # Try GNU stat first (Linux), then BSD stat (macOS)
-                file_size=$(stat -c%s "$temp_file" 2>/dev/null || stat -f%z "$temp_file" 2>/dev/null || echo 0)
-            else
-                # Fallback to ls if stat is not available
-                file_size=$(ls -l "$temp_file" 2>/dev/null | awk '{print $5}' || echo 0)
-            fi
-            log INFO "Downloaded $db_name ($file_size bytes)"
-            
-            # Basic file validation
-            if [[ "$db_name" == *.mmdb ]]; then
-                # Check if it's a valid MMDB file by looking for MaxMind metadata marker at the end
-                # MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
-                # Check for MaxMind metadata marker (metadata can be up to 128KB per spec)
-                # Using xxd for reliable binary pattern matching
-                if command -v xxd >/dev/null 2>&1 && ! tail -c 131072 "$temp_file" 2>/dev/null | xxd -p | tr -d '\n' | grep -q "abcdef4d61784d696e642e636f6d" 2>/dev/null; then
-                    log WARN "MMDB file $db_name may be invalid: missing MaxMind metadata marker"
-                fi
-            elif [[ "$db_name" == *.BIN ]]; then
-                # Basic check for BIN files
-                if [[ $file_size -lt 1000 ]]; then
-                    log ERROR "BIN file $db_name is too small to be valid"
-                    return 1
-                fi
-            fi
-            
-            # Move to target location (atomic operation)
-            mv "$temp_file" "$target_file" || {
-                log ERROR "Failed to move $db_name to target directory"
-                return 1
-            }
-            
-            log SUCCESS "Successfully updated: $db_name"
-            return 0
-        else
-            log ERROR "Downloaded file is empty or missing: $db_name"
+    rm -f "$temp_file"
+
+    local max_no_progress=3
+    local hard_cap=50          # backstop against a pathological loop
+    local no_progress=0
+    local attempt=0
+    local success=false
+
+    while true; do
+        attempt=$((attempt + 1))
+        if [[ $attempt -gt $hard_cap ]]; then
+            log ERROR "$db_name: giving up after $hard_cap attempts"
+            break
+        fi
+
+        local prev_size
+        prev_size=$(file_size_bytes "$temp_file")
+
+        # Resume only when we already have partial bytes.
+        local resume_opts=()
+        if [[ "$prev_size" -gt 0 ]]; then
+            resume_opts=(--continue-at -)
+            log INFO "Resuming $db_name from $prev_size bytes (attempt $attempt)"
+        fi
+
+        # Capture only stdout (the write-out code); --show-error sends any curl
+        # error to the terminal. --speed-limit/--speed-time abort a stalled
+        # transfer quickly so the resume loop can pick it back up.
+        local http_code curl_exit
+        http_code=$(curl --silent --show-error --location --fail \
+            --connect-timeout 30 \
+            --max-time "$TIMEOUT" \
+            --speed-limit 1024 --speed-time 120 \
+            "${resume_opts[@]+"${resume_opts[@]}"}" \
+            --write-out "%{http_code}" \
+            --output "$temp_file" \
+            "$url")
+        curl_exit=$?
+
+        local cur_size
+        cur_size=$(file_size_bytes "$temp_file")
+
+        # Success = a normal completion (curl 0 + 2xx) OR a resume where the
+        # local file is already complete (S3 returns 416 Range Not Satisfiable).
+        if { [[ $curl_exit -eq 0 ]] && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; } || [[ "$http_code" == "416" ]]; then
+            success=true
+            break
+        fi
+
+        # Auth / expired presigned URL: not resumable, fail fast with guidance.
+        if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+            log ERROR "$db_name: access denied (HTTP $http_code) - the download URL may have expired; re-run to refresh URLs"
             return 1
         fi
-    else
+
+        if [[ "$cur_size" -gt "$prev_size" ]]; then
+            no_progress=0
+            log WARN "$db_name: transfer interrupted (HTTP $http_code, curl exit $curl_exit) at $cur_size bytes - resuming"
+        else
+            no_progress=$((no_progress + 1))
+            log WARN "$db_name: no progress (HTTP $http_code, curl exit $curl_exit) - attempt $no_progress/$max_no_progress"
+            if [[ "$no_progress" -ge "$max_no_progress" ]]; then
+                break
+            fi
+            sleep 5
+        fi
+    done
+
+    if [[ "$success" != true ]]; then
         log ERROR "Failed to download: $db_name"
         return 1
     fi
+
+    local file_size
+    file_size=$(file_size_bytes "$temp_file")
+    log INFO "Downloaded $db_name ($file_size bytes)"
+
+    # Basic file validation
+    if [[ "$db_name" == *.mmdb ]]; then
+        # Check for the MaxMind metadata marker near the end (metadata can be up
+        # to 128KB per spec); uses xxd for reliable binary pattern matching.
+        if command -v xxd >/dev/null 2>&1 && ! tail -c 131072 "$temp_file" 2>/dev/null | xxd -p | tr -d '\n' | grep -q "abcdef4d61784d696e642e636f6d" 2>/dev/null; then
+            log WARN "MMDB file $db_name may be invalid: missing MaxMind metadata marker"
+        fi
+    elif [[ "$db_name" == *.BIN ]]; then
+        if [[ $file_size -lt 1000 ]]; then
+            log ERROR "BIN file $db_name is too small to be valid"
+            return 1
+        fi
+    fi
+
+    # Move to target location (atomic operation)
+    mv "$temp_file" "$target_file" || {
+        log ERROR "Failed to move $db_name to target directory"
+        return 1
+    }
+
+    log SUCCESS "Successfully updated: $db_name"
+    return 0
 }
 
 # Main update function

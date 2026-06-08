@@ -494,31 +494,97 @@ download_database() {
     local db_name="$1"
     local url="$2"
     local output_file="$TARGET_DIR/$db_name"
-    
+    local temp_file="${output_file}.part"
+
     log INFO "Downloading: $db_name"
-    
-    if http_request "$url" "GET" "$output_file"; then
-        # Verify file was downloaded
-        if [ -f "$output_file" ]; then
-            local size=$(wc -c < "$output_file" 2>/dev/null || echo 0)
-            
-            # Check for error pages (usually small HTML files)
-            if [ "$size" -lt 1000 ]; then
-                log ERROR "Downloaded file too small ($size bytes), likely an error page: $db_name"
-                rm -f "$output_file"
-                return 1
-            fi
-            
-            log SUCCESS "Downloaded: $db_name ($(( size / 1024 / 1024 ))MB)"
-            return 0
-        else
-            log ERROR "Failed to save file: $db_name"
-            return 1
+    rm -f "$temp_file"
+
+    # Resume on interruption/stall instead of restarting from byte 0, so large
+    # databases complete on flaky links. Retry while progressing; give up only
+    # after a few consecutive no-progress attempts.
+    local max_no_progress=3
+    local hard_cap=50
+    local no_progress=0
+    local attempt=0
+    local success=no
+    local prev_size cur_size resume http_code curl_exit
+
+    while :; do
+        attempt=$((attempt + 1))
+        if [ "$attempt" -gt "$hard_cap" ]; then
+            log ERROR "$db_name: giving up after $hard_cap attempts"
+            break
         fi
-    else
+
+        prev_size=0
+        [ -f "$temp_file" ] && prev_size=$(wc -c < "$temp_file" 2>/dev/null || echo 0)
+
+        resume=""
+        if [ "$prev_size" -gt 0 ]; then
+            resume="--continue-at -"
+            log INFO "Resuming $db_name from $prev_size bytes (attempt $attempt)"
+        fi
+
+        # $resume is intentionally unquoted so it splits into two args (or none).
+        http_code=$(curl --silent --show-error --location --fail \
+            --connect-timeout 30 --max-time "$TIMEOUT" \
+            --speed-limit 1024 --speed-time 120 \
+            $resume \
+            --write-out '%{http_code}' --output "$temp_file" "$url")
+        curl_exit=$?
+
+        cur_size=0
+        [ -f "$temp_file" ] && cur_size=$(wc -c < "$temp_file" 2>/dev/null || echo 0)
+
+        # Success = normal completion (curl 0 + 2xx) OR a resume where the local
+        # file is already complete (S3 returns 416 Range Not Satisfiable).
+        if { [ "$curl_exit" -eq 0 ] && echo "$http_code" | grep -qE '^2[0-9][0-9]$'; } || [ "$http_code" = "416" ]; then
+            success=yes
+            break
+        fi
+
+        case "$http_code" in
+            401|403)
+                log ERROR "$db_name: access denied (HTTP $http_code) - the download URL may have expired; re-run to refresh URLs"
+                rm -f "$temp_file"
+                return 1
+                ;;
+        esac
+
+        if [ "$cur_size" -gt "$prev_size" ]; then
+            no_progress=0
+            log WARN "$db_name: transfer interrupted (HTTP $http_code, curl exit $curl_exit) at $cur_size bytes - resuming"
+        else
+            no_progress=$((no_progress + 1))
+            log WARN "$db_name: no progress (HTTP $http_code, curl exit $curl_exit) - attempt $no_progress/$max_no_progress"
+            if [ "$no_progress" -ge "$max_no_progress" ]; then
+                break
+            fi
+            sleep 5
+        fi
+    done
+
+    if [ "$success" != yes ]; then
         log ERROR "Failed to download: $db_name"
+        rm -f "$temp_file"
         return 1
     fi
+
+    local size
+    size=$(wc -c < "$temp_file" 2>/dev/null || echo 0)
+    if [ "$size" -lt 1000 ]; then
+        log ERROR "Downloaded file too small ($size bytes), likely an error page: $db_name"
+        rm -f "$temp_file"
+        return 1
+    fi
+
+    mv "$temp_file" "$output_file" || {
+        log ERROR "Failed to move $db_name to target directory"
+        return 1
+    }
+
+    log SUCCESS "Downloaded: $db_name ($(( size / 1024 / 1024 ))MB)"
+    return 0
 }
 
 # Download databases with parallel support
