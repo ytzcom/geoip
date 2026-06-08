@@ -184,12 +184,15 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Registry cache requires Docker Hub auth, which is skipped on PRs.
+          # Gate the type=registry entries on non-PR events so PR builds use
+          # only the GHA cache and don't 401 on the registry cache export.
           cache-from: |
             type=gha,scope=${{ matrix.name }}
-            type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:buildcache
+            ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/{2}:buildcache', env.DOCKER_REGISTRY, env.DOCKER_NAMESPACE, matrix.name) || '' }}
           cache-to: |
             type=gha,mode=max,scope=${{ matrix.name }}
-            type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ matrix.name }}:buildcache,mode=max
+            ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/{2}:buildcache,mode=max', env.DOCKER_REGISTRY, env.DOCKER_NAMESPACE, matrix.name) || '' }}
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             VERSION=${{ needs.setup.outputs.version }}

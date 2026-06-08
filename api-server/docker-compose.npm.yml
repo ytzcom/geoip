@@ -1,0 +1,98 @@
+services:
+  geoip-api:
+    image: ytzcom/geoip-api:latest
+    container_name: geoip-api
+    restart: always
+    expose:
+      - "8080"
+    environment:
+      # API Configuration
+      - API_KEYS=${API_KEYS}
+
+      # Download Configuration - Use S3 URLs in production for scalability
+      - USE_S3_URLS=${USE_S3_URLS:-true}
+
+      # S3 Configuration (required when USE_S3_URLS=true)
+      - S3_BUCKET=${S3_BUCKET:-your-geoip-bucket}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - URL_EXPIRY_SECONDS=${URL_EXPIRY_SECONDS:-3600}
+
+      # Database Storage Configuration (always required)
+      - DATABASE_PATH=/data/databases
+
+      # Query and Caching Configuration
+      - CACHE_TYPE=${CACHE_TYPE:-redis}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - CACHE_TTL=${CACHE_TTL}
+      - QUERY_RATE_LIMIT=${QUERY_RATE_LIMIT:-50}
+
+      # Session Configuration
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY}
+
+      # Database Update Configuration
+      - DATABASE_UPDATE_SCHEDULE=${DATABASE_UPDATE_SCHEDULE:-0 4 * * 1}
+
+      # Server Configuration
+      - WORKERS=${WORKERS:-4}
+      - DEBUG=false
+
+      # Admin Configuration
+      - ENABLE_ADMIN=${ENABLE_ADMIN:-true}
+      - ADMIN_KEY=${ADMIN_KEY}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    volumes:
+      # Volume for database persistence (local copy for queries)
+      - geoip-databases:/data/databases
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    depends_on:
+      - redis
+
+    networks:
+      - geoip-network
+      - nginx-proxy-manager_npm
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+
+  # Redis service for caching
+  redis:
+    image: redis:7-alpine
+    container_name: geoip-redis
+    restart: always
+    volumes:
+      - redis-data:/data
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - geoip-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  geoip-network:
+    driver: bridge
+  nginx-proxy-manager_npm:
+    external: true
+
+volumes:
+  geoip-databases:
+    driver: local
+  redis-data:
+    driver: local
