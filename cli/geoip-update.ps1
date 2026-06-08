@@ -26,7 +26,8 @@
     Maximum number of retry attempts (default: 3)
 
 .PARAMETER Timeout
-    Download timeout in seconds (default: 300)
+    Per-request download timeout in seconds (default: 1800). Raised from 300 so
+    large databases finish on slow links (Invoke-WebRequest has no stall timeout).
 
 .PARAMETER Quiet
     Suppress all output except errors
@@ -89,7 +90,7 @@ param(
     [int]$MaxRetries = 3,
     
     [Parameter()]
-    [int]$Timeout = 300,
+    [int]$Timeout = 1800,
     
     [Parameter()]
     [switch]$Quiet,
@@ -739,8 +740,9 @@ function Update-Databases {
         Write-Progress -Activity "Downloading GeoIP Databases" -Completed
     }
     else {
-        # Parallel downloads without progress bars
-        $maxParallel = 4
+        # Parallel downloads without progress bars. Default 2 (was 4):
+        # bandwidth-bound downloads finish large files sooner with fewer streams.
+        $maxParallel = 2
         $jobs = @()
         $completedCount = 0
         $failedCount = 0

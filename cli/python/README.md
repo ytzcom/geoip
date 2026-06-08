@@ -124,8 +124,8 @@ Use configuration file:
 ### Advanced Options
 ```bash
 # Performance
---concurrent NUM           Max concurrent downloads (default: 4)
---timeout SECONDS          Download timeout per file (default: 300)
+--concurrent NUM           Max concurrent downloads (default: 2)
+--timeout SECONDS          Overall download ceiling per file (default: 1800; aborts early only on stall)
 --chunk-size BYTES         Download chunk size (default: 8192)
 
 # Retry Logic
