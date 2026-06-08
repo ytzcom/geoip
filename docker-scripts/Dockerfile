@@ -27,7 +27,7 @@ RUN GOOS=linux GOARCH=arm64 go build \
     main.go
 
 # Stage 2: Prepare scripts
-FROM alpine:3.19 as builder
+FROM alpine:3.19 AS builder
 
 WORKDIR /opt/geoip
 

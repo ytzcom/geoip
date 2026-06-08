@@ -342,7 +342,7 @@ geoip-update -v
 - **[Python CLI Details](python/README.md)** - Advanced features and configuration
 - **[Go Binary Guide](go/README.md)** - Minimal deployment option
 - **[Docker Integration](../docker-scripts/README.md)** - Container integration
-- **[Usage Examples](../docs/USAGE_EXAMPLES.md)** - Programming language examples
+- **[Usage Examples](../USAGE_EXAMPLES.md)** - Programming language examples
 - **[Security Guide](../docs/SECURITY.md)** - Security best practices
 
 ## 🤝 Contributing
