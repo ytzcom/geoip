@@ -1,6 +1,6 @@
 [Unit]
 Description=GeoIP Database Update Timer
-Documentation=https://github.com/yourusername/geoip-updater
+Documentation=https://github.com/ytzcom/geoip
 Requires=geoip-update.service
 
 [Timer]

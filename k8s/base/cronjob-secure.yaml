@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: geoip-updater
         app.kubernetes.io/component: job
         # Add version label for pod deletion during updates
-        version: "{{ .Chart.Version | default "1.0.0" }}"
+        version: "1.0.0"
     spec:
       # Retry policy
       backoffLimit: 3
@@ -105,7 +105,7 @@ spec:
           containers:
           - name: geoip-updater
             # Use pre-built image with all dependencies
-            image: your-registry/geoip-updater:latest
+            image: ytzcom/geoip-updater:latest
             imagePullPolicy: IfNotPresent
             
             # Command arguments
@@ -226,17 +226,17 @@ data:
     1. Build the image:
     ```bash
     cd scripts/cli
-    docker build -f k8s/Dockerfile -t your-registry/geoip-updater:latest .
+    docker build -f k8s/Dockerfile -t ytzcom/geoip-updater:latest .
     ```
     
     2. Push to registry:
     ```bash
-    docker push your-registry/geoip-updater:latest
+    docker push ytzcom/geoip-updater:latest
     ```
     
     3. Update the CronJob manifest with your image:
     ```yaml
-    image: your-registry/geoip-updater:latest
+    image: ytzcom/geoip-updater:latest
     ```
     
     ## Using Different Base Images

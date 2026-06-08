@@ -8,13 +8,17 @@ resources:
   - priorityclass.yaml
   - rbac.yaml
   - pvc.yaml
-  - secret.yaml
-  - configmap.yaml
   - networkpolicy.yaml
   - cronjob-secure.yaml
 
+# Note: geoip-config (ConfigMap) and geoip-api-credentials (Secret) are
+# produced by the generators below so overlays can override them with
+# `behavior: replace`. The static configmap.yaml / secret.yaml files are
+# kept as reference manifests but intentionally not listed here to avoid
+# duplicate-resource conflicts.
+
 images:
-  - name: your-registry/geoip-updater
+  - name: ytzcom/geoip-updater
     newTag: latest
 
 configMapGenerator:
@@ -46,7 +50,3 @@ labels:
       managed-by: kustomize
     includeSelectors: true
     includeTemplates: true
-
-replicas:
-  - name: geoip-updater
-    count: 1
