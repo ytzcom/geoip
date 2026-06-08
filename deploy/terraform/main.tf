@@ -223,9 +223,8 @@ variable "custom_domain_name" {
 }
 
 variable "acm_certificate_arn" {
-  description = "ARN of existing ACM certificate for the domain (must be in us-east-1)"
+  description = "ARN of an existing ACM certificate for the custom domain. Must already exist in us-east-1 (CloudFront requirement). Required - supply via terraform.tfvars."
   type        = string
-  default     = "arn:aws:acm:us-east-1:562693942294:certificate/ca3f2422-060b-4723-abde-caf081335120"
 }
 
 # CloudFront distribution for custom domain

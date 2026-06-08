@@ -7,6 +7,7 @@ Terraform configuration for deploying the GeoIP authentication system to AWS.
 This infrastructure creates:
 - **Lambda Function**: Validates API keys and generates pre-signed S3 URLs
 - **API Gateway**: HTTP API endpoint for authentication
+- **CloudFront Distribution**: Serves the API on a custom domain with TLS
 - **CloudWatch Logs**: API and Lambda logging
 
 ## Prerequisites
@@ -14,6 +15,13 @@ This infrastructure creates:
 - [Terraform](https://www.terraform.io/downloads.html) >= 1.0
 - [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate credentials
 - An existing S3 bucket with GeoIP database files
+- An existing ACM certificate **in us-east-1** covering your custom domain
+  (CloudFront only reads certificates from us-east-1). Its ARN is a required
+  variable — see `acm_certificate_arn` below.
+
+> **Note:** Terraform state (`*.tfstate`) and the `lambda_deployment.zip`
+> build artifact are gitignored (see `.gitignore`) — state can contain
+> secrets in plaintext and must never be committed.
 
 ## Quick Start
 
@@ -40,6 +48,8 @@ cat > terraform.tfvars <<EOF
 api_keys = "your-key-1,your-key-2,your-key-3"
 s3_bucket_name = "your-s3-bucket"  # Replace with your S3 bucket name
 aws_region = "us-east-1"
+custom_domain_name = "geoip.example.com"  # Your domain
+acm_certificate_arn = "arn:aws:acm:us-east-1:<account-id>:certificate/<cert-id>"  # Must exist in us-east-1
 EOF
 
 # Package Lambda
@@ -63,6 +73,8 @@ terraform apply
 | `s3_bucket_name` | S3 bucket containing GeoIP files | "your-s3-bucket" |
 | `aws_region` | AWS region for deployment | "us-east-1" |
 | `environment` | Environment name for tagging | "production" |
+| `custom_domain_name` | Custom domain served by CloudFront | "geoipdb.net" |
+| `acm_certificate_arn` | ARN of an ACM cert in us-east-1 for the domain | **required** (no default) |
 
 ### Setting API Keys
 
