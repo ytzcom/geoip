@@ -24,7 +24,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config import Settings, get_settings
+from config import Settings, get_settings, validate_settings
 from geoip_reader import GeoIPReader
 from cache import get_cache
 from database_updater import update_databases
@@ -239,7 +239,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"Download URLs: {'S3 pre-signed' if settings.use_s3_urls else 'Local file serving'}")
     logger.info(f"API Keys configured: {len(settings.api_keys)}")
     logger.info(f"Cache Type: {settings.cache_type}")
-    
+
+    # Fail fast on invalid configuration (e.g. no API keys, or S3 mode
+    # without a bucket) instead of starting an auth server that silently
+    # rejects every request.
+    validate_settings(settings)
+
     # Always verify database path exists (needed for query functionality)
     if not Path(settings.database_path).exists():
         logger.warning(f"Database path does not exist: {settings.database_path}")

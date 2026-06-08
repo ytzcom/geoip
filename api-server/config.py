@@ -160,16 +160,10 @@ def validate_settings(settings: Settings) -> bool:
     if not isinstance(settings.use_s3_urls, bool):
         raise ValueError(f"Invalid use_s3_urls: {settings.use_s3_urls} (must be true or false)")
     
-    # Check API keys
+    # Check API keys (the api_keys property already strips and drops empties)
     if not settings.api_keys:
         raise ValueError("No API keys configured")
-    
-    # Clean up API keys (remove empty strings)
-    settings.api_keys = [k.strip() for k in settings.api_keys if k.strip()]
-    
-    if not settings.api_keys:
-        raise ValueError("No valid API keys after cleanup")
-    
+
     # Check S3 configuration if needed
     if settings.use_s3_urls:
         if not settings.s3_bucket:
