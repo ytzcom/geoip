@@ -189,6 +189,70 @@ Features:
 - Multi-worker processes
 - Production logging
 
+### Behind Nginx Proxy Manager (NPM)
+
+```bash
+# API + Redis, no public ports — NPM terminates TLS
+docker compose --env-file secrets/.env -f docker-compose.npm.yml up -d
+```
+
+Use this when an existing **Nginx Proxy Manager** instance already owns ports
+80/443 and handles SSL. Differences from `docker-compose.prod.yml`:
+
+- **No bundled nginx service** — avoids the 80/443 collision with NPM.
+- **No published host ports** — `geoip-api` only `expose`s `8080` internally.
+- **Joins NPM's docker network** so NPM can reach the API container-to-container.
+- Includes Redis (`CACHE_TYPE=redis`) and `WORKERS=4` production defaults.
+
+Features:
+- Reverse proxy + SSL handled by NPM (Let's Encrypt)
+- Redis caching
+- Multi-worker processes
+- Nothing exposed on the host
+
+**Prerequisites:**
+
+1. Secrets live in `secrets/.env` (gitignored). Generate strong values:
+   ```bash
+   mkdir -p secrets && cp .env.example secrets/.env
+   echo "SESSION_SECRET_KEY=$(openssl rand -hex 32)"   # add to secrets/.env
+   echo "ADMIN_KEY=$(openssl rand -hex 24)"            # add to secrets/.env
+   ```
+   Required keys: `API_KEYS`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`,
+   `AWS_SECRET_ACCESS_KEY`, `SESSION_SECRET_KEY`, `ADMIN_KEY`.
+
+2. The external network must match NPM's actual network name. The compose file
+   expects `nginx-proxy-manager_npm`. Verify and edit if different:
+   ```bash
+   docker network ls | grep -i npm
+   ```
+
+**NPM Proxy Host config:**
+
+| Field | Value |
+|-------|-------|
+| Domain Names | your domain (e.g. `geoipdb.net`) |
+| Scheme | `http` |
+| Forward Hostname / IP | `geoip-api` (container name) |
+| Forward Port | `8080` |
+| Block Common Exploits | ON |
+| SSL | Request new Let's Encrypt cert, Force SSL + HTTP/2 |
+
+> Let's Encrypt issues the cert only **after** DNS for the domain points to the
+> server (HTTP-01 challenge). Verify over `http` first, then point DNS, then
+> request the cert.
+
+**Verify before DNS** (force domain → server IP):
+```bash
+KEY=<one-of-API_KEYS>
+curl -s --resolve DOMAIN:80:SERVER_IP http://DOMAIN/health
+
+# download flow: /auth returns a presigned S3 URL, then fetch it
+curl -s --resolve DOMAIN:80:SERVER_IP -X POST http://DOMAIN/auth \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"databases":["country"]}' | jq -r '.[]'
+```
+
 ### Basic Setup
 
 ```bash
