@@ -93,14 +93,25 @@ jobs:
           if [ "$DEBUG_MODE" = "true" ]; then
             set -x
           fi
+          # The script exits non-zero only when EVERY IP2Location database
+          # fails; a single degraded database (e.g. an expired entitlement)
+          # is reported via the `failed` output and does not block the run.
           ./github-actions/download-ip2location.sh \
             "temp/compressed/ip2location" \
-            "${{ secrets.IP2LOCATION_TOKEN }}" || {
-            echo "error=IP2Location download failed" >> $GITHUB_OUTPUT
-            exit 1
-          }
-      
-      
+            "${{ secrets.IP2LOCATION_TOKEN }}"
+
+      - name: Note IP2Location degraded downloads
+        if: ${{ always() && steps.download-ip2location.outputs.failed != '' }}
+        run: |
+          echo "## ⚠️ IP2Location: degraded download" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "These IP2Location database(s) could not be downloaded and kept their last-published S3 copy:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '`${{ steps.download-ip2location.outputs.failed }}`' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See the download step logs for the IP2Location response (\`NO PERMISSION\` = entitlement/subscription issue, or a daily-limit message)." >> $GITHUB_STEP_SUMMARY
+
+
       - name: Upload compressed files to S3
         run: |
           set -euo pipefail
