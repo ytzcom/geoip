@@ -5,7 +5,7 @@ namespace: geoip-system
 
 # Base resources
 resources:
-  - ../../
+  - ../../base
 
 # Common labels for prod
 commonLabels:
@@ -68,10 +68,9 @@ patches:
           value: "true"
           effect: "NoSchedule"
 
-# Production image
+# Production image: override the base image tag with a pinned prod tag
 images:
-  - name: python
-    newName: your-registry/geoip-updater
+  - name: ytzcom/geoip-updater
     newTag: v1.0.0-prod
 
 # Use external secret operator or sealed secrets

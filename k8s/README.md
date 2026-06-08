@@ -137,11 +137,11 @@ Build and push your image:
 ```bash
 # Build image
 cd scripts/cli/docker
-docker build -t your-registry/geoip-updater:v1.0.0 .
-docker push your-registry/geoip-updater:v1.0.0
+docker build -t ytzcom/geoip-updater:v1.0.0 .
+docker push ytzcom/geoip-updater:v1.0.0
 
 # Update cronjob.yaml
-image: your-registry/geoip-updater:v1.0.0
+image: ytzcom/geoip-updater:v1.0.0
 ```
 
 ### Option 3: Go Binary in Minimal Image

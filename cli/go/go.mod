@@ -1,4 +1,4 @@
-module github.com/yourusername/geoip-updater
+module github.com/ytzcom/geoip/cli/go
 
 go 1.21
 
