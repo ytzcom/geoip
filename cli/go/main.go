@@ -293,7 +293,8 @@ func (h *HTTPClient) doWithRetry(req *http.Request) (*http.Response, error) {
 
 		// Check status code
 		switch resp.StatusCode {
-		case http.StatusOK:
+		case http.StatusOK, http.StatusPartialContent, http.StatusRequestedRangeNotSatisfiable:
+			// 200 full, 206 resumed range, 416 range-not-satisfiable (already complete)
 			return resp, nil
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
@@ -393,44 +394,107 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 	tempFile := filepath.Join(g.tempDir, name)
 	targetFile := filepath.Join(g.config.TargetDir, name)
 
-	// Per-download cancellable context so a stalled body read can be aborted
-	// by the idle-timeout reader below (cancelling it unblocks resp.Body.Read).
-	reqCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Resume on interruption/stall (HTTP Range) rather than restarting from
+	// byte 0, so large databases complete on flaky links. Retry while the
+	// transfer keeps making progress; give up only after a few consecutive
+	// no-progress attempts.
+	os.Remove(tempFile) // fresh start for this database
+	const maxNoProgress = 3
+	const hardCap = 50
+	noProgress := 0
+	var lastErr error
 
-	// Create request with context
-	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
-	if err != nil {
-		return DownloadResult{Database: name, Error: fmt.Errorf("failed to create request: %w", err)}
+	for attempt := 1; ; attempt++ {
+		if attempt > hardCap {
+			return DownloadResult{Database: name, Error: fmt.Errorf("giving up after %d attempts: %w", hardCap, lastErr)}
+		}
+
+		var offset int64
+		if fi, statErr := os.Stat(tempFile); statErr == nil {
+			offset = fi.Size()
+		}
+
+		reqCtx, cancel := context.WithCancel(ctx)
+		req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+		if err != nil {
+			cancel()
+			return DownloadResult{Database: name, Error: fmt.Errorf("failed to create request: %w", err)}
+		}
+		if offset > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+			g.logger.Info("Resuming %s from %d bytes (attempt %d)", name, offset, attempt)
+		}
+
+		// doWithRetry handles transient/429 retries and fails fast on 401/403.
+		resp, err := g.httpClient.doWithRetry(req)
+		if err != nil {
+			cancel()
+			lastErr = err
+			noProgress++
+			if noProgress >= maxNoProgress {
+				return DownloadResult{Database: name, Error: err}
+			}
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		// 416 => the byte range is past EOF, i.e. we already have the whole file.
+		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			resp.Body.Close()
+			cancel()
+			break
+		}
+
+		// 206 resumes (append); 200 means the server sent the whole body, so
+		// start the file fresh.
+		var out *os.File
+		if resp.StatusCode == http.StatusPartialContent && offset > 0 {
+			out, err = os.OpenFile(tempFile, os.O_APPEND|os.O_WRONLY, 0o644)
+		} else {
+			out, err = os.Create(tempFile)
+		}
+		if err != nil {
+			resp.Body.Close()
+			cancel()
+			return DownloadResult{Database: name, Error: fmt.Errorf("failed to open temp file: %w", err)}
+		}
+
+		// Copy through a stall guard: abort if no bytes arrive for
+		// downloadIdleTimeout (slow-but-progressing transfers are unaffected).
+		body := newIdleTimeoutReader(resp.Body, downloadIdleTimeout, cancel)
+		_, copyErr := io.Copy(out, body)
+		body.Stop()
+		out.Close()
+		resp.Body.Close()
+		cancel()
+
+		if copyErr == nil {
+			break // read through to EOF => complete
+		}
+
+		lastErr = copyErr
+		var cur int64
+		if fi, statErr := os.Stat(tempFile); statErr == nil {
+			cur = fi.Size()
+		}
+		if cur > offset {
+			noProgress = 0
+			g.logger.Warn("%s: transfer interrupted at %d bytes - resuming (%v)", name, cur, copyErr)
+		} else {
+			noProgress++
+			g.logger.Warn("%s: no progress (attempt %d/%d): %v", name, noProgress, maxNoProgress, copyErr)
+			if noProgress >= maxNoProgress {
+				return DownloadResult{Database: name, Error: fmt.Errorf("failed to download: %w", copyErr)}
+			}
+			time.Sleep(5 * time.Second)
+		}
 	}
 
-	// Download file
-	resp, err := g.httpClient.doWithRetry(req)
-	if err != nil {
-		return DownloadResult{Database: name, Error: err}
-	}
-	defer resp.Body.Close()
-
-	// Create temp file
-	out, err := os.Create(tempFile)
-	if err != nil {
-		return DownloadResult{Database: name, Error: fmt.Errorf("failed to create temp file: %w", err)}
-	}
-	defer out.Close()
-
-	// Copy data through a stall guard: abort if no bytes arrive for
-	// downloadIdleTimeout (slow-but-progressing transfers are not affected).
-	body := newIdleTimeoutReader(resp.Body, downloadIdleTimeout, cancel)
-	defer body.Stop()
-	size, err := io.Copy(out, body)
-	if err != nil {
-		return DownloadResult{Database: name, Error: fmt.Errorf("failed to download: %w", err)}
-	}
-
-	// Validate file
-	if size == 0 {
+	fi, err := os.Stat(tempFile)
+	if err != nil || fi.Size() == 0 {
 		return DownloadResult{Database: name, Error: fmt.Errorf("downloaded file is empty")}
 	}
+	size := fi.Size()
 
 	// Basic validation for MMDB files
 	if strings.HasSuffix(name, ".mmdb") {
