@@ -105,7 +105,7 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 | `GEOIP_API_ENDPOINT` | `https://geoipdb.net/auth` | API endpoint URL |
 | `GEOIP_TARGET_DIR` | `./geoip` | Database storage directory |
 | `GEOIP_DATABASES` | `all` | Databases to download |
-| `GEOIP_TIMEOUT` | `300s` | HTTP timeout duration |
+| `GEOIP_TIMEOUT` | `1800s` | Overall download ceiling (aborts early only on a 120s stall) |
 | `GEOIP_MAX_RETRIES` | `3` | Maximum retry attempts |
 
 ### Command Line Options

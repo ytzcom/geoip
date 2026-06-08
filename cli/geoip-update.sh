@@ -18,7 +18,8 @@
 #   -l, --log-file FILE     Log to file
 #   -n, --no-lock           Don't use lock file
 #   -r, --retries NUM       Max retries (default: 3)
-#   -t, --timeout SEC       Download timeout in seconds (default: 300)
+#   -t, --timeout SEC       Overall download ceiling in seconds (default: 1800);
+#                           a download is aborted early only if it stalls (<1KB/s for 120s)
 #   -L, --list-databases    List all available databases and aliases
 #   -E, --show-examples     Show usage examples for database selection
 #   -V, --validate-only     Validate database names without downloading
@@ -56,7 +57,7 @@ readonly SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 readonly DEFAULT_ENDPOINT="https://geoipdb.net/auth"
 readonly DEFAULT_TARGET_DIR="./geoip"
 readonly DEFAULT_RETRIES=3
-readonly DEFAULT_TIMEOUT=300
+readonly DEFAULT_TIMEOUT=1800  # overall ceiling; stall detection (below) is the real guard
 readonly LOCK_FILE="/tmp/geoip-update.lock"
 readonly TEMP_DIR_PREFIX="/tmp/geoip-update"
 
@@ -347,6 +348,11 @@ http_request() {
             --location
             --max-time "$TIMEOUT"
             --connect-timeout 30
+            # Stall detection: abort only if the transfer drops below 1KB/s for
+            # 120s. This lets large databases finish on slow links instead of
+            # being killed by an absolute wall-clock timeout mid-transfer.
+            --speed-limit 1024
+            --speed-time 120
             --retry 0  # We handle retries ourselves
             --fail
         )
@@ -550,11 +556,13 @@ update_databases() {
         local total_count=$(echo "$urls" | wc -l | tr -d ' ')
         log INFO "Received URLs for $total_count databases"
         
-        # Download databases in parallel (up to 4 at a time)
+        # Download databases in parallel. Default 2 (was 4): downloads are
+        # usually bandwidth-bound, so fewer parallel streams give each large
+        # file more of the pipe and finish it sooner. Override via GEOIP_CONCURRENT.
         local download_count=0
         local failed_count=0
         local pids=()
-        local max_parallel=4
+        local max_parallel="${GEOIP_CONCURRENT:-2}"
         
         while IFS='|' read -r db_name url; do
             # Wait if we have too many parallel downloads
