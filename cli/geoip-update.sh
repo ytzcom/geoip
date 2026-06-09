@@ -542,6 +542,16 @@ download_database() {
             return 1
         fi
 
+        # Server ignored the Range request: curl 33 ("Cannot resume"), or a 200
+        # returned while we were resuming. The partial can't be continued, so
+        # discard it and restart from byte 0 on the next iteration.
+        if [[ $curl_exit -eq 33 ]] || { [[ "$prev_size" -gt 0 ]] && [[ "$http_code" == "200" ]]; }; then
+            log WARN "$db_name: server did not honor resume (HTTP $http_code, curl exit $curl_exit) - restarting from scratch"
+            rm -f "$temp_file"
+            no_progress=0
+            continue
+        fi
+
         if [[ "$cur_size" -gt "$prev_size" ]]; then
             no_progress=0
             log WARN "$db_name: transfer interrupted (HTTP $http_code, curl exit $curl_exit) at $cur_size bytes - resuming"
