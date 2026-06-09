@@ -184,9 +184,9 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 | `country` | `GeoIP2-Country.mmdb` | ~9MB | MaxMind |
 | `isp` | `GeoIP2-ISP.mmdb` | ~17MB | MaxMind |
 | `connection` | `GeoIP2-Connection-Type.mmdb` | ~11MB | MaxMind |
-| `db23-ipv4` | `IP-COUNTRY-REGION-CITY...BIN` | ~633MB | IP2Location |
-| `db23-ipv6` | `IPV6-COUNTRY-REGION-CITY...BIN` | ~805MB | IP2Location |
-| `px2` | `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN` | ~192MB | IP2Location |
+| `ipv4` | `IP-COUNTRY-REGION-CITY...BIN` | ~633MB | IP2Location |
+| `ipv6` | `IPV6-COUNTRY-REGION-CITY...BIN` | ~805MB | IP2Location |
+| `proxy` (or `ip2proxy`) | `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN` | ~192MB | IP2Location |
 
 ## ⚡ Performance Features
 

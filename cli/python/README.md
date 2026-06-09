@@ -35,7 +35,7 @@ docker run --rm \
 pip install aiohttp pyyaml tqdm
 
 # Download script
-curl -O https://raw.githubusercontent.com/ytzcom/geoip-updater/main/cli/python/geoip-update.py
+curl -O https://raw.githubusercontent.com/ytzcom/geoip/main/cli/python/geoip-update.py
 chmod +x geoip-update.py
 
 # Run
@@ -191,9 +191,9 @@ The tool supports intelligent database name resolution:
 | `country` | `GeoIP2-Country.mmdb` | MaxMind |
 | `isp` | `GeoIP2-ISP.mmdb` | MaxMind |
 | `connection` | `GeoIP2-Connection-Type.mmdb` | MaxMind |
-| `db23-ipv4` | `IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN` | IP2Location |
-| `db23-ipv6` | `IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN` | IP2Location |
-| `px2` | `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN` | IP2Location |
+| `ipv4` | `IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN` | IP2Location |
+| `ipv6` | `IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN` | IP2Location |
+| `proxy` (or `ip2proxy`) | `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN` | IP2Location |
 
 ## 🚀 Performance Optimization
 
