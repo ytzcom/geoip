@@ -549,7 +549,25 @@ function Invoke-ResumableDownload {
             $fsMode = if ($append) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
             $fs = [System.IO.FileStream]::new($OutFile, $fsMode, [System.IO.FileAccess]::Write)
             $stream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
-            $stream.CopyTo($fs)
+
+            # Per-read stall guard (120s): abort a transfer that stops delivering
+            # bytes, while $client.Timeout is the overall ceiling. This matches
+            # the curl --speed-time / aiohttp sock_read / Go idle-reader guard in
+            # the other variants (HttpClient.Timeout alone is a total timeout and
+            # would let a mid-body stall hang for the full ceiling).
+            $buffer = New-Object byte[] 65536
+            while ($true) {
+                $cts = [System.Threading.CancellationTokenSource]::new()
+                $cts.CancelAfter([TimeSpan]::FromSeconds(120))
+                try {
+                    $read = $stream.ReadAsync($buffer, 0, $buffer.Length, $cts.Token).GetAwaiter().GetResult()
+                }
+                finally {
+                    $cts.Dispose()
+                }
+                if ($read -le 0) { break }
+                $fs.Write($buffer, 0, $read)
+            }
             $fs.Dispose(); $stream.Dispose(); $resp.Dispose(); $client.Dispose()
             return $true  # read through to EOF => complete
         }
