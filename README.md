@@ -6,7 +6,7 @@
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
 
-Automated GeoIP database updater for MaxMind and IP2Location databases. This repository automatically downloads, validates, and uploads GeoIP databases to S3 for public distribution.
+Automated GeoIP database updater for MaxMind and IP2Location databases. This repository automatically downloads, validates, and stores GeoIP databases in S3, serving them through an authenticated API.
 
 ## 📅 Update Schedule
 
@@ -14,43 +14,28 @@ Databases are automatically updated **every Monday at midnight UTC**.
 
 ## 🚀 Quick Start
 
-### Direct Download Links
+### Getting the databases
 
-#### MaxMind Databases (MMDB Format)
-
-```bash
-# GeoIP2 City Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/maxmind/GeoIP2-City.mmdb
-
-# GeoIP2 Country Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/maxmind/GeoIP2-Country.mmdb
-
-# GeoIP2 ISP Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/maxmind/GeoIP2-ISP.mmdb
-
-# GeoIP2 Connection Type Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/maxmind/GeoIP2-Connection-Type.mmdb
-```
-
-#### IP2Location Databases (BIN Format)
+Databases are served through an authenticated API — request a short-lived
+download URL with your API key, then fetch it. The simplest way is the bundled
+CLI tools, which handle authentication and validation for you:
 
 ```bash
-# IP2Location IPv4 Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/ip2location/IP-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN
-
-# IP2Location IPv6 Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/ip2location/IPV6-COUNTRY-REGION-CITY-LATITUDE-LONGITUDE-ISP-DOMAIN-MOBILE-USAGETYPE.BIN
-
-# IP2Proxy IPv4 Database
-curl -O https://ytz-geoip.s3.amazonaws.com/raw/ip2location/IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN
+# Download all databases (see cli/README.md for options and other languages)
+./cli/geoip-update.sh -k YOUR_API_KEY
 ```
 
-### Download Compressed Archives
+Or call the API directly to obtain presigned download URLs:
 
-Compressed archives are also available:
+```bash
+curl -s -X POST https://geoipdb.net/auth \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"databases": "all"}'
+```
 
-- MaxMind: `https://ytz-geoip.s3.amazonaws.com/compressed/maxmind/[database-name].tar.gz`
-- IP2Location: `https://ytz-geoip.s3.amazonaws.com/compressed/ip2location/[database-name].zip`
+See **[cli/README.md](cli/README.md)** for the bash, PowerShell, Python and Go
+clients and database-selection options.
 
 ## 📊 Database Information
 
@@ -179,7 +164,8 @@ pip install geoip2 IP2Location IP2Proxy
 ## 🔐 Security
 
 - All databases are validated before upload to ensure integrity
-- S3 bucket has public read access for easy distribution
+- Databases are served only through the authenticated API, which issues
+  short-lived presigned URLs; the storage bucket is not for direct public access
 - Original database licenses apply - ensure compliance with MaxMind and IP2Location terms
 
 ## 🤝 Contributing
@@ -198,9 +184,9 @@ This repository's code is licensed under the MIT License. The GeoIP databases th
 
 ## 🔗 Links
 
+- [CLI Tools](cli/README.md)
 - [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases)
 - [IP2Location](https://www.ip2location.com/)
-- [S3 Bucket](https://ytz-geoip.s3.amazonaws.com/)
 
 ---
 
