@@ -8,7 +8,7 @@ Command-line tools for downloading GeoIP databases. Choose the implementation th
 |----------|-------------|-------------|
 | **Linux/macOS** | [Bash Script](#bash-script) | [Python CLI](python/README.md) |
 | **Windows** | [PowerShell Script](#powershell-script) | [Python CLI](python/README.md) |
-| **Docker** | [Docker Images](../README.md#choose-your-implementation) | [Native Scripts](#native-scripts) |
+| **Docker** | [Docker Images](#docker-images) | [Native Scripts](#native-scripts) |
 | **Cross-platform** | [Python CLI](python/README.md) | [Go Binary](go/README.md) |
 | **Minimal footprint** | [Go Binary](go/README.md) | [Bash Script](#bash-script) |
 | **Advanced features** | [Python CLI](python/README.md) | [Bash Script](#bash-script) |
@@ -28,13 +28,13 @@ Command-line tools for downloading GeoIP databases. Choose the implementation th
 
 ```bash
 # Download and run
-curl -O https://raw.githubusercontent.com/ytzcom/geoip-updater/main/cli/geoip-update.sh
+curl -O https://raw.githubusercontent.com/ytzcom/geoip/main/cli/geoip-update.sh
 chmod +x geoip-update.sh
 ./geoip-update.sh -k YOUR_API_KEY
 
 # Or clone repository
-git clone https://github.com/ytzcom/geoip-updater.git
-cd geoip-updater/cli
+git clone https://github.com/ytzcom/geoip.git
+cd geoip/cli
 ./geoip-update.sh -k YOUR_API_KEY
 ```
 
@@ -53,12 +53,12 @@ cd geoip-updater/cli
 
 ```powershell
 # Download and run
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ytzcom/geoip-updater/main/cli/geoip-update.ps1" -OutFile "geoip-update.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ytzcom/geoip/main/cli/geoip-update.ps1" -OutFile "geoip-update.ps1"
 .\geoip-update.ps1 -ApiKey YOUR_API_KEY
 
 # Or clone repository
-git clone https://github.com/ytzcom/geoip-updater.git
-cd geoip-updater/cli
+git clone https://github.com/ytzcom/geoip.git
+cd geoip/cli
 .\geoip-update.ps1 -ApiKey YOUR_API_KEY
 ```
 
@@ -103,7 +103,7 @@ export GEOIP_DATABASES="all"  # or "city,country" for specific ones
 | API Key | `-k`, `--api-key` | `-ApiKey` | `-k`, `--api-key` | Authentication key |
 | Endpoint | `-e`, `--endpoint` | `-ApiEndpoint` | `-e`, `--endpoint` | API endpoint URL |
 | Directory | `-d`, `--directory` | `-TargetDirectory` | `-d`, `--directory` | Target directory |
-| Databases | `-D`, `--databases` | `-Databases` | `-b`, `--databases` | Database selection |
+| Databases | `-b`, `--databases` | `-Databases` | `-b`, `--databases` | Database selection |
 | Quiet | `-q`, `--quiet` | `-Quiet` | `-q`, `--quiet` | Silent mode for automation |
 | Verbose | `-v`, `--verbose` | `-Verbose` | `-v`, `--verbose` | Detailed output |
 | Log File | `-l`, `--log-file` | `-LogFile` | `-l`, `--log-file` | Log to file |
@@ -135,9 +135,12 @@ All tools support flexible database selection:
 - `country` → `GeoIP2-Country.mmdb`
 - `isp` → `GeoIP2-ISP.mmdb`
 - `connection` → `GeoIP2-Connection-Type.mmdb`
-- `px2` → `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN`
-- `db23-ipv4` → IPv4 comprehensive database
-- `db23-ipv6` → IPv6 comprehensive database
+- `proxy` (or `ip2proxy`) → `IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN`
+- `ipv4` → IP2Location IPv4 comprehensive database
+- `ipv6` → IP2Location IPv6 comprehensive database
+- `maxmind/all`, `ip2location/all` → all databases for that provider
+
+Run `./geoip-update.sh --list-databases` for the authoritative list of names and aliases.
 
 ## ✅ Database Validation
 
@@ -325,7 +328,7 @@ Enable verbose output for troubleshooting:
 .\geoip-update.ps1 -Verbose
 
 # Python
-geoip-update -v
+python geoip-update.py -v
 ```
 
 ## 📊 Performance Comparison
