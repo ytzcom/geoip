@@ -68,6 +68,33 @@ This will:
 - Start the API server on port 8080
 - Use S3 backend by default (configurable)
 
+For production hosts, `docker-deploy.sh` automates pull + deploy and sources the
+API's environment as described next.
+
+### Environment configuration (dotenv.ca — optional)
+
+`deploy/docker-deploy.sh` provisions the API's `.env` in one of two ways:
+
+- **Manual** — place your settings in `secrets/.env` on the host. This is used
+  whenever no `DOTENV_TOKEN` is set; the script never contacts any external service.
+- **Automatic via [dotenv.ca](https://dotenv.ca)** *(optional)* — when `DOTENV_TOKEN`
+  is set, the script fetches `.env` from dotenv.ca on every deploy. This is the
+  default mechanism the maintainers use and is handy for multi-host setups.
+
+dotenv.ca is a third-party secrets store and is **entirely optional**. To use it:
+
+1. Create an account at <https://dotenv.ca> and add a project for this API.
+2. Point the script at *your* project and token (defaults to the maintainers' project):
+   ```bash
+   export DOTENV_TOKEN="your-token"
+   export DOTENV_API_URL="https://dotenv.ca/api/<your-project>/docker/production"
+   ./deploy/docker-deploy.sh
+   ```
+3. In GitHub Actions, supply `DOTENV_TOKEN` as a repository secret (see
+   [`.github/workflows/README.md`](../.github/workflows/README.md)).
+
+If you prefer not to use it, just keep a `secrets/.env` file and leave `DOTENV_TOKEN` unset.
+
 ### 2. Manage API Keys
 
 ```bash

@@ -41,12 +41,11 @@ MaxMind / IP2Location          <- your provider accounts
 
 ## 📥 Using the databases
 
-If you already have an endpoint and an API key (your own deployment, or access to a hosted instance), the bundled CLI handles auth, download and validation:
+**Existing geoipdb.net users** — if the maintainers have issued you an API key for the hosted service, the bundled CLI handles auth, download and validation. It targets `https://geoipdb.net/auth` by default, so you only need your key:
 
 ```bash
 # Bash - see cli/README.md for PowerShell, Python, Go and selection options
-GEOIP_API_ENDPOINT=https://your-instance.example/auth \
-  ./cli/geoip-update.sh -k YOUR_API_KEY
+./cli/geoip-update.sh -k YOUR_API_KEY
 ```
 
 In CI, use the reusable GitHub Action:
@@ -55,24 +54,30 @@ In CI, use the reusable GitHub Action:
 - uses: ytzcom/geoip@main
   with:
     api-key: ${{ secrets.GEOIP_API_KEY }}
-    auth-endpoint: https://your-instance.example/auth
     databases: all
+    # auth-endpoint defaults to https://geoipdb.net/auth
 ```
 
 Or call the API directly for presigned URLs:
 
 ```bash
-curl -s -X POST https://your-instance.example/auth \
+curl -s -X POST https://geoipdb.net/auth \
   -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"databases": "all"}'
 ```
 
+**Self-hosting your own deployment?** Point the same clients at your endpoint with `GEOIP_API_ENDPOINT` (or the Action's `auth-endpoint`) — see **Running your own instance** below.
+
 See **[cli/README.md](cli/README.md)** and **[docs/GITHUB_ACTION.md](docs/GITHUB_ACTION.md)** for every option.
 
 ## 🏗️ Running your own instance
 
-The project is free to use with **your own credentials**. To operate the pipeline you need:
+The project is free to use with **your own credentials**. Self-hosting has two parts: the database **pipeline** (required) and the download **API** (optional).
+
+### 1. Run the database pipeline
+
+You need accounts of your own:
 
 | Credential | Used for | Where to get it |
 |-----------|----------|-----------------|
@@ -81,17 +86,31 @@ The project is free to use with **your own credentials**. To operate the pipelin
 | AWS access key + secret | Uploading to S3 | Your AWS IAM user |
 | A private S3 bucket | Storing the databases | Your AWS account |
 
-Setup:
-
 1. **Fork** this repository.
 2. Add repository **secrets** (Settings → Secrets and variables → Actions → *Secrets*): `MAXMIND_LICENSE_KEY`, `IP2LOCATION_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` _(optional: `SLACK_WEBHOOK_URL`)_.
 3. Add repository **variables** (same screen → *Variables*): `MAXMIND_ACCOUNT_ID`, `S3_BUCKET` (your bucket name), `AWS_REGION` _(optional: `CREATE_ISSUE_ON_FAILURE`)_.
 4. Run **Update GeoIP Databases** (Actions tab → Run workflow), or wait for the weekly schedule.
-5. _(Optional)_ Deploy the auth API so clients can fetch with an API key — see **[deploy/README.md](deploy/README.md)**.
 
-Full secret/variable reference: **[.github/workflows/README.md](.github/workflows/README.md)**. Stuck? See **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**.
+Your databases now land in your S3 bucket. Full secret/variable reference: **[.github/workflows/README.md](.github/workflows/README.md)**; stuck? see **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**.
 
 > ⚠️ **Keep your S3 bucket private.** These databases are paid/licensed; public access can leak them and run up your costs.
+
+### 2. (Optional) Deploy the download API
+
+Deploy the authenticated API so clients can fetch databases with an API key. Clone your fork and pick a target:
+
+```bash
+git clone https://github.com/YOUR_ORG/geoip.git
+cd geoip
+
+# AWS Lambda (serverless) - provisions API Gateway + Lambda
+./deploy/deploy.sh
+
+# ...or Docker on your own host
+./deploy/docker-deploy.sh
+```
+
+The API loads its settings from an `.env` file. Provide it manually (`secrets/.env`), or let the Docker deploy pull it automatically from **[dotenv.ca](https://dotenv.ca)** (optional) by setting `DOTENV_TOKEN`. Full options — API-key management, custom domains and dotenv.ca setup — are in **[deploy/README.md](deploy/README.md)**.
 
 ## 📊 Database Information
 
