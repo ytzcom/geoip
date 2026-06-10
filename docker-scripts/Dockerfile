@@ -14,14 +14,14 @@ COPY cli/go/main.go .
 
 # Build for AMD64
 RUN GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-s -w -X main.version=1.0.0" \
+    -ldflags="-s -w -X main.version=1.1.0" \
     -trimpath \
     -o geoip-update-amd64 \
     main.go
 
 # Build for ARM64
 RUN GOOS=linux GOARCH=arm64 go build \
-    -ldflags="-s -w -X main.version=1.0.0" \
+    -ldflags="-s -w -X main.version=1.1.0" \
     -trimpath \
     -o geoip-update-arm64 \
     main.go
