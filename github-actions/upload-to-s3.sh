@@ -37,9 +37,10 @@ fi
 
 echo "Found $FILE_COUNT files to upload"
 
-# Upload files using aws s3 sync
+# Upload files using aws s3 sync.
+# Objects are uploaded with S3's default (private) ACL; they are distributed
+# only via the authenticated API's presigned URLs, not public S3 access.
 aws s3 sync "$SOURCE_DIR/" "s3://${S3_BUCKET}/${S3_PREFIX}/" \
-    --acl public-read \
     --content-type "$CONTENT_TYPE" \
     --exclude "*" \
     --include "$FILE_PATTERN" \
