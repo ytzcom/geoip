@@ -914,7 +914,7 @@ async def check_database_names_command(config: Config):
 @click.option('--show-examples', is_flag=True, help='Show usage examples for database selection')
 @click.option('--check-names', is_flag=True, help='Validate database names with API without downloading')
 @click.option('--validate-only', is_flag=True, help='Validate existing database files')
-@click.version_option(version='1.0.0')
+@click.version_option(version='1.1.0')
 def main(api_key, endpoint, directory, databases, config, log_file, retries, 
          timeout, concurrent, quiet, verbose, no_lock, no_ssl_verify,
          list_databases, show_examples, check_names, validate_only):
