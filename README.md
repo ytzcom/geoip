@@ -86,6 +86,12 @@ You need accounts of your own:
 | AWS access key + secret | Uploading to S3 | Your AWS IAM user |
 | A private S3 bucket | Storing the databases | Your AWS account |
 
+> **These are commercial databases** — the free MaxMind GeoLite2 and IP2Location LITE tiers do **not** include these editions. Your provider accounts must be entitled to:
+> - **MaxMind** (paid GeoIP2 subscription): `GeoIP2-City`, `GeoIP2-Country`, `GeoIP2-ISP`, `GeoIP2-Connection-Type`.
+> - **IP2Location** (paid subscription/download quota): `DB23` (IPv4 + IPv6) and `PX2` (proxy detection).
+>
+> A database your account isn't entitled to is skipped with a permission warning — the last copy on S3 is kept — rather than failing the whole run.
+
 1. **Fork** this repository.
 2. Add repository **secrets** (Settings → Secrets and variables → Actions → *Secrets*): `MAXMIND_LICENSE_KEY`, `IP2LOCATION_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` _(optional: `SLACK_WEBHOOK_URL`)_.
 3. Add repository **variables** (same screen → *Variables*): `MAXMIND_ACCOUNT_ID`, `S3_BUCKET` (your bucket name), `AWS_REGION` _(optional: `CREATE_ISSUE_ON_FAILURE`)_.
