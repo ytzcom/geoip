@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in your own values. terraform.tfvars is gitignored.
+
+# API Keys configuration (set during deployment or via environment variable)
+api_keys = ""
+
+# S3 bucket configuration
+s3_bucket_name = "your-geoip-bucket"
+
+# AWS region
+aws_region = "us-east-1"
+
+# Custom domain configuration
+custom_domain_name = "your-domain.example"
+acm_certificate_arn = "arn:aws:acm:us-east-1:<account-id>:certificate/<cert-id>"
