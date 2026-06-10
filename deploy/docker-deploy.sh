@@ -11,7 +11,9 @@ BRANCH="${BRANCH:-main}"
 COMPOSE_FILE="docker-compose.prod.yml"
 DOCKER_IMAGE="${DOCKER_IMAGE:-ytzcom/geoip-api:latest}"
 DOTENV_TOKEN="${DOTENV_TOKEN:-}"
-DOTENV_API_URL="https://dotenv.ca/api/geoip-api/docker/production"
+# Optional dotenv.ca integration. Override DOTENV_API_URL to point at your own
+# dotenv.ca project when self-hosting; leave unset to use the maintainers' default.
+DOTENV_API_URL="${DOTENV_API_URL:-https://dotenv.ca/api/geoip-api/docker/production}"
 DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-}"
 DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-}"
 
