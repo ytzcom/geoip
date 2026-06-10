@@ -6,36 +6,92 @@
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
 
-Automated GeoIP database updater for MaxMind and IP2Location databases. This repository automatically downloads, validates, and stores GeoIP databases in S3, serving them through an authenticated API.
+A self-hostable pipeline that keeps **MaxMind** and **IP2Location** GeoIP databases up to date. A scheduled GitHub Actions workflow downloads the databases using *your own* provider credentials, validates them, and stores them in *your own* private S3 bucket. An optional authenticated API hands out short-lived presigned download URLs, and CLI clients (Bash, PowerShell, Python, Go) fetch and verify them.
 
-## 📅 Update Schedule
+> The maintainers run a reference deployment at `https://geoipdb.net`. Access to it needs an API key we issue — to use this project freely, **run your own instance** with your own credentials (see below).
 
-Databases are automatically updated **every Monday at midnight UTC**.
+## 🧭 How it works
 
-## 🚀 Quick Start
-
-### Getting the databases
-
-Databases are served through an authenticated API — request a short-lived
-download URL with your API key, then fetch it. The simplest way is the bundled
-CLI tools, which handle authentication and validation for you:
-
-```bash
-# Download all databases (see cli/README.md for options and other languages)
-./cli/geoip-update.sh -k YOUR_API_KEY
+```
+MaxMind / IP2Location          <- your provider accounts
+       |  download + validate     (GitHub Actions, weekly: Mondays 00:00 UTC)
+       v
+   Your private S3 bucket
+       |  presigned URL on request
+       v
+   Auth API (optional)           (Lambda or Docker/K8s - validates API keys)
+       |
+       v
+   CLI clients / GitHub Action <- fetch + verify databases
 ```
 
-Or call the API directly to obtain presigned download URLs:
+## 🧩 Repository structure
+
+| Path | What it is |
+|------|------------|
+| [`.github/workflows/`](.github/workflows/README.md) | The scheduled pipeline (`update-geoip.yml`) plus build, release and deploy workflows |
+| [`github-actions/`](github-actions/) | Scripts the workflow runs: download, extract, validate, upload to S3, README update |
+| [`action.yml`](docs/GITHUB_ACTION.md) | Reusable composite GitHub Action to download & cache databases in your own CI |
+| [`cli/`](cli/README.md) | Download clients: [Bash](cli/README.md), [Python](cli/python/README.md), [Go](cli/go/README.md), [cron](cli/python-cron/README.md), [Kubernetes](cli/python-k8s/README.md), [systemd](cli/systemd/README.md) |
+| [`api-server/`](api-server/README.md) | FastAPI auth/query server that issues presigned S3 URLs (Docker-deployable) |
+| [`deploy/`](deploy/README.md) | Deploy the auth API — [Terraform/Lambda](deploy/terraform/README.md) or Docker |
+| [`k8s/`](k8s/README.md) | Kubernetes CronJob manifests for running updates in-cluster |
+| [`docker-scripts/`](docker-scripts/README.md) | Minimal Docker image bundling the clients and validators |
+| [`docs/`](docs/) | Guides: [GitHub Action](docs/GITHUB_ACTION.md) · [notifications](docs/NOTIFICATIONS.md) · [releases](docs/RELEASE_PROCESS.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security](docs/SECURITY.md) · [Docker cleanup](docs/DOCKER_CLEANUP.md) |
+
+## 📥 Using the databases
+
+If you already have an endpoint and an API key (your own deployment, or access to a hosted instance), the bundled CLI handles auth, download and validation:
 
 ```bash
-curl -s -X POST https://geoipdb.net/auth \
+# Bash - see cli/README.md for PowerShell, Python, Go and selection options
+GEOIP_API_ENDPOINT=https://your-instance.example/auth \
+  ./cli/geoip-update.sh -k YOUR_API_KEY
+```
+
+In CI, use the reusable GitHub Action:
+
+```yaml
+- uses: ytzcom/geoip@main
+  with:
+    api-key: ${{ secrets.GEOIP_API_KEY }}
+    auth-endpoint: https://your-instance.example/auth
+    databases: all
+```
+
+Or call the API directly for presigned URLs:
+
+```bash
+curl -s -X POST https://your-instance.example/auth \
   -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"databases": "all"}'
 ```
 
-See **[cli/README.md](cli/README.md)** for the bash, PowerShell, Python and Go
-clients and database-selection options.
+See **[cli/README.md](cli/README.md)** and **[docs/GITHUB_ACTION.md](docs/GITHUB_ACTION.md)** for every option.
+
+## 🏗️ Running your own instance
+
+The project is free to use with **your own credentials**. To operate the pipeline you need:
+
+| Credential | Used for | Where to get it |
+|-----------|----------|-----------------|
+| MaxMind account ID + license key | Downloading MaxMind databases | <https://www.maxmind.com/en/my_license_key> |
+| IP2Location download token | Downloading IP2Location databases | <https://www.ip2location.com/web-service> |
+| AWS access key + secret | Uploading to S3 | Your AWS IAM user |
+| A private S3 bucket | Storing the databases | Your AWS account |
+
+Setup:
+
+1. **Fork** this repository.
+2. Add repository **secrets** (Settings → Secrets and variables → Actions → *Secrets*): `MAXMIND_LICENSE_KEY`, `IP2LOCATION_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` _(optional: `SLACK_WEBHOOK_URL`)_.
+3. Add repository **variables** (same screen → *Variables*): `MAXMIND_ACCOUNT_ID`, `S3_BUCKET` (your bucket name), `AWS_REGION` _(optional: `CREATE_ISSUE_ON_FAILURE`)_.
+4. Run **Update GeoIP Databases** (Actions tab → Run workflow), or wait for the weekly schedule.
+5. _(Optional)_ Deploy the auth API so clients can fetch with an API key — see **[deploy/README.md](deploy/README.md)**.
+
+Full secret/variable reference: **[.github/workflows/README.md](.github/workflows/README.md)**. Stuck? See **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**.
+
+> ⚠️ **Keep your S3 bucket private.** These databases are paid/licensed; public access can leak them and run up your costs.
 
 ## 📊 Database Information
 
@@ -149,44 +205,47 @@ http {
 
 ## 📋 Requirements
 
-To use these databases in your applications, you'll need:
+**To run the pipeline (operator):** a GitHub account (to fork and run Actions), MaxMind and IP2Location accounts, and an AWS account with a private S3 bucket. See **Running your own instance** above for the exact secrets and variables.
 
-- **MaxMind databases**: `geoip2` Python library or equivalent
-- **IP2Location databases**: `IP2Location` Python library or equivalent
-- **IP2Proxy databases**: `IP2Proxy` Python library or equivalent
-
-Install Python libraries:
+**To read the databases in your application:** the matching reader library —
 
 ```bash
 pip install geoip2 IP2Location IP2Proxy
 ```
 
+- MaxMind `.mmdb` → `geoip2`
+- IP2Location `.BIN` → `IP2Location`
+- IP2Proxy `.BIN` → `IP2Proxy`
+
 ## 🔐 Security
 
-- All databases are validated before upload to ensure integrity
-- Databases are served only through the authenticated API, which issues
-  short-lived presigned URLs; the storage bucket is not for direct public access
-- Original database licenses apply - ensure compliance with MaxMind and IP2Location terms
+- All databases are validated before upload to ensure integrity.
+- They are served only through the authenticated API, which issues short-lived presigned URLs; the storage bucket is **private**, not for direct public access.
+- The original provider licenses apply — comply with MaxMind and IP2Location terms.
+- Hardening guidance and how to report a vulnerability: **[docs/SECURITY.md](docs/SECURITY.md)**.
 
 ## 🤝 Contributing
 
-To trigger a manual update:
-1. Go to the [Actions tab](https://github.com/ytzcom/geoip/actions)
-2. Select "Update GeoIP Databases"
-3. Click "Run workflow"
+Contributions are welcome! In short:
+
+1. **Fork** the repo and create a branch (`fix/…`, `feat/…`, `docs/…`).
+2. Make a focused change that matches the existing style.
+3. Use [Conventional Commits](https://www.conventionalcommits.org/) for messages (e.g. `fix(cli): handle empty response`).
+4. Open a pull request describing the change, and make sure CI passes.
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full guide. For security issues, **do not** open a public issue — follow **[docs/SECURITY.md](docs/SECURITY.md)**.
 
 ## 📄 License
 
-This repository's code is licensed under the MIT License. The GeoIP databases themselves are subject to their respective licenses:
+This repository's **code** is licensed under the [MIT License](LICENSE). The GeoIP **databases** are *not* covered by it — they remain subject to their providers' licenses:
 
-- MaxMind databases: [MaxMind End User License Agreement](https://www.maxmind.com/en/geolite2/eula)
-- IP2Location databases: [IP2Location License Agreement](https://www.ip2location.com/licensing)
+- MaxMind: [End User License Agreement](https://www.maxmind.com/en/geolite2/eula)
+- IP2Location: [License Agreement](https://www.ip2location.com/licensing)
 
 ## 🔗 Links
 
-- [CLI Tools](cli/README.md)
-- [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases)
-- [IP2Location](https://www.ip2location.com/)
+- [CLI tools](cli/README.md) · [GitHub Action](docs/GITHUB_ACTION.md) · [Deployment](deploy/README.md) · [Contributing](CONTRIBUTING.md)
+- [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases) · [IP2Location](https://www.ip2location.com/)
 
 ---
 
