@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     
     # S3 Configuration (required when use_s3_urls is true)
     s3_bucket: str = Field(
-        default="ytz-geoip",
+        default="your-geoip-bucket",
         description="S3 bucket name for GeoIP databases"
     )
     aws_access_key_id: Optional[str] = Field(
@@ -189,7 +189,7 @@ API_KEYS=key1,key2,key3              # Comma-separated API keys
 USE_S3_URLS=true                     # Use S3 URLs (true) or serve files directly (false)
 
 # S3 Configuration (required when USE_S3_URLS=true)
-S3_BUCKET=ytz-geoip                  # S3 bucket name
+S3_BUCKET=your-geoip-bucket                  # S3 bucket name
 AWS_ACCESS_KEY_ID=your-key-id        # Optional: AWS credentials
 AWS_SECRET_ACCESS_KEY=your-secret    # Optional: AWS credentials
 AWS_REGION=us-east-1                 # AWS region

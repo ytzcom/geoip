@@ -7,7 +7,7 @@ TIMESTAMP="$1"
 TOTAL_COUNT="$2"
 MAXMIND_COUNT="$3"
 IP2LOCATION_COUNT="$4"
-S3_BUCKET="${5:-ytz-geoip}"
+S3_BUCKET="${5:-your-geoip-bucket}"
 
 # Create URL-encoded version of timestamp for badge (replace spaces with %20 and escape dashes)
 TIMESTAMP_BADGE=$(echo "$TIMESTAMP" | sed 's/ /%20/g' | sed 's/-/--/g')

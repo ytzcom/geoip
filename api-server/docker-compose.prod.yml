@@ -14,7 +14,7 @@ services:
       - USE_S3_URLS=${USE_S3_URLS:-true}
       
       # S3 Configuration (required when USE_S3_URLS=true)
-      - S3_BUCKET=${S3_BUCKET:-ytz-geoip}
+      - S3_BUCKET=${S3_BUCKET:-your-geoip-bucket}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-us-east-1}

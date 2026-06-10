@@ -87,7 +87,7 @@ All CLI scripts support comprehensive validation of database files:
 
 - **Parallel Downloads**: Both MaxMind and IP2Location downloads run concurrently to reduce total execution time
 - **Cross-Platform Compatibility**: Uses `wc -c` instead of `stat` for file size checks to work on both Linux and macOS
-- **Configurable S3 Bucket**: The S3 bucket name can be customized via the `S3_BUCKET` secret (defaults to 'ytz-geoip')
+- **Configurable S3 Bucket**: The S3 bucket name can be customized via the `S3_BUCKET` secret (defaults to 'your-geoip-bucket')
 - **CIDR Databases Excluded**: Only BIN and MMDB formats are supported; CSV/CIDR databases were removed as they're not needed
 - **Enhanced Validation**: All CLI scripts include `--validate-only` flag for comprehensive database validation using reliable binary pattern matching for MMDB files
 
@@ -117,7 +117,7 @@ GitHub repository must have these secrets configured:
 
 ### Variables (non-sensitive configuration)
 GitHub repository can have these variables configured:
-- `S3_BUCKET`: Custom S3 bucket name (defaults to 'ytz-geoip')
+- `S3_BUCKET`: Custom S3 bucket name (defaults to 'your-geoip-bucket')
 - `AWS_REGION`: AWS region (defaults to 'us-east-1')
 - `MAXMIND_ACCOUNT_ID`: MaxMind account identifier
 - `CREATE_ISSUE_ON_FAILURE`: Set to 'true' to create GitHub issues on failure

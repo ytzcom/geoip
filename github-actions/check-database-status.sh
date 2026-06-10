@@ -4,7 +4,7 @@ set -euo pipefail
 # Check the status of GeoIP databases on S3
 # Usage: ./check-database-status.sh [bucket-name]
 
-BUCKET="${1:-ytz-geoip}"
+BUCKET="${1:-your-geoip-bucket}"
 
 echo "🔍 Checking GeoIP Database Status on S3 Bucket: $BUCKET"
 echo "================================================"

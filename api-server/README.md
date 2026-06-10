@@ -136,7 +136,7 @@ docker run -p 8080:8080 \
 | `SESSION_SECRET_KEY` | Secret key for signing session cookies | *Required* |
 | **Download Configuration** | | |
 | `USE_S3_URLS` | Use S3 pre-signed URLs for downloads | `true` |
-| `S3_BUCKET` | S3 bucket name (required when USE_S3_URLS=true) | `ytz-geoip` |
+| `S3_BUCKET` | S3 bucket name (required when USE_S3_URLS=true) | `your-geoip-bucket` |
 | `AWS_ACCESS_KEY_ID` | AWS credentials (optional, uses IAM role if not set) | - |
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials (optional, uses IAM role if not set) | - |
 | `AWS_REGION` | AWS region | `us-east-1` |

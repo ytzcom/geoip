@@ -9,7 +9,7 @@ import boto3
 from typing import Dict, List, Optional, Any
 
 # Environment variables
-S3_BUCKET = os.environ.get('S3_BUCKET', 'ytz-geoip')
+S3_BUCKET = os.environ.get('S3_BUCKET', 'your-geoip-bucket')
 ALLOWED_API_KEYS = os.environ.get('ALLOWED_API_KEYS', '').split(',')
 URL_EXPIRY_SECONDS = int(os.environ.get('URL_EXPIRY_SECONDS', '3600'))
 

@@ -30,7 +30,7 @@ jobs:
       job-status: ${{ job.status }}
     
     env:
-      S3_BUCKET: ${{ vars.S3_BUCKET || 'ytz-geoip' }}
+      S3_BUCKET: ${{ vars.S3_BUCKET || 'your-geoip-bucket' }}
     
     steps:
       - name: Checkout repository

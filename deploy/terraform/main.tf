@@ -29,7 +29,7 @@ variable "environment" {
 variable "s3_bucket_name" {
   description = "S3 bucket name for GeoIP databases"
   type        = string
-  default     = "ytz-geoip"
+  default     = "your-geoip-bucket"
 }
 
 variable "api_keys" {

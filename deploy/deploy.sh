@@ -93,7 +93,7 @@ api_keys = "$API_KEYS"
 
 # Customize these if needed
 # aws_region = "us-east-1"
-# s3_bucket_name = "ytz-geoip"
+# s3_bucket_name = "your-geoip-bucket"
 EOF
     echo "✅ terraform.tfvars created"
 fi

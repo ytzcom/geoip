@@ -55,6 +55,16 @@ test_data/
 # AWS
 .aws/
 
+# Secrets & keys
+*.pem
+*.key
+*.crt
+*.p12
+
+# Terraform variable files (real account IDs / ARNs / bucket names)
+*.tfvars
+!*.tfvars.example
+
 # Environment variables
 .env
 .env.local
