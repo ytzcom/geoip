@@ -2,7 +2,7 @@
 
 # Variables
 BINARY_NAME := geoip-update
-VERSION := 1.1.0
+VERSION := 1.1.1
 BUILD_DIR := build
 GOFLAGS := -ldflags="-s -w -X main.version=$(VERSION)" -trimpath
 

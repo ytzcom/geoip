@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-06-11
+
+### Fixed
+- CLI: `--timeout`/`-t` now accepts a Go duration string (`5m`, `300s`, `90s`)
+  in addition to a bare integer in seconds (`1800`). The composite GitHub Action
+  defaults its `timeout` input to `5m` and forwarded it raw to the binary, which
+  previously declared `-timeout` as an integer — so every consumer on `v1.1.0`
+  that didn't override `timeout` failed at runtime with
+  `invalid value "5m" for flag -timeout: parse error`. The effective default is
+  unchanged at 1800s (30m), and bare-integer callers keep working. (#17)
+
 ## [1.1.0] - 2026-06-10
 
 ### Added
@@ -46,5 +57,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   S3 storage, authenticated download API (Lambda and Docker), multi-language CLI
   clients, and a reusable composite GitHub Action.
 
+[1.1.1]: https://github.com/ytzcom/geoip/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ytzcom/geoip/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ytzcom/geoip/releases/tag/v1.0.0
