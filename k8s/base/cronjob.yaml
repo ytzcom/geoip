@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: geoip-updater
     app.kubernetes.io/component: cronjob
-    app.kubernetes.io/version: "1.1.1"
+    app.kubernetes.io/version: "1.1.2"
 spec:
   # Schedule: Daily at 2 AM UTC
   schedule: "0 2 * * *"
