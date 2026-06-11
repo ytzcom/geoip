@@ -10,7 +10,7 @@ long_description = (this_directory / "README.md").read_text() if (this_directory
 
 setup(
     name="geoip-update",
-    version="1.1.0",
+    version="1.1.1",
     author="GeoIP Update",
     description="Download GeoIP databases from authenticated API",
     long_description=long_description,
