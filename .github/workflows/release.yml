@@ -3,7 +3,10 @@ name: Unified Release
 on:
   push:
     tags:
-      - 'v*'
+      # Full semver only (vX.Y.Z, plus optional -suffix/build metadata). This
+      # deliberately excludes the floating major/minor tags v1 and v1.1, so
+      # moving those onto a release commit does not fire another release.
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
     inputs:
       version:
