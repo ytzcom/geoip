@@ -71,7 +71,7 @@ patches:
 # Production image: override the base image tag with a pinned prod tag
 images:
   - name: ytzcom/geoip-updater
-    newTag: v1.1.1-prod
+    newTag: v1.1.2-prod
 
 # Use external secret operator or sealed secrets
 # secretGenerator:

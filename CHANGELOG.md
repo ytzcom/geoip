@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-06-11
+
+### Fixed
+- CLI: `--version` printed a doubled prefix (`vv1.1.1`) on released binaries.
+  The release workflow injects a `v`-prefixed git tag via
+  `-ldflags -X main.version=v1.1.1` while the handler also prepended its own
+  `v`; local/Makefile builds (bare `1.1.1`) hid it. Now normalized to exactly
+  one leading `v`. (#19)
+
 ## [1.1.1] - 2026-06-11
 
 ### Fixed
@@ -57,6 +66,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   S3 storage, authenticated download API (Lambda and Docker), multi-language CLI
   clients, and a reusable composite GitHub Action.
 
+[1.1.2]: https://github.com/ytzcom/geoip/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/ytzcom/geoip/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ytzcom/geoip/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ytzcom/geoip/releases/tag/v1.0.0
