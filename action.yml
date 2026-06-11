@@ -38,7 +38,9 @@ inputs:
     required: false
     default: 'true'
   timeout:
-    description: 'Download timeout duration (e.g., 5m, 300s)'
+    # Forwarded raw to the binary's --timeout, which accepts a Go duration
+    # ('5m', '300s') or a bare integer in seconds ('1800').
+    description: 'Download timeout: duration (e.g., 5m, 300s) or seconds (e.g., 1800)'
     required: false
     default: '5m'
   concurrent:

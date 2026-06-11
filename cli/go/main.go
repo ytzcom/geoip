@@ -649,6 +649,38 @@ func (g *GeoIPUpdater) cleanup() {
 	}
 }
 
+// timeoutValue is a flag.Value for --timeout/-t that accepts either a bare
+// integer interpreted as seconds ("1800") or a Go duration string ("5m",
+// "300s", "90s"). Plain integers keep existing callers working; duration
+// strings let the GitHub Action forward its documented "5m / 300s" format
+// straight through to the binary.
+type timeoutValue struct {
+	d time.Duration
+}
+
+func (t *timeoutValue) String() string {
+	if t == nil {
+		return ""
+	}
+	return t.d.String()
+}
+
+func (t *timeoutValue) Set(s string) error {
+	s = strings.TrimSpace(s)
+	// A bare integer means seconds (backward compatible with the old flag.Int).
+	if n, err := strconv.Atoi(s); err == nil {
+		t.d = time.Duration(n) * time.Second
+		return nil
+	}
+	// Otherwise accept a Go duration string ("5m", "300s", "90s").
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid value %q: want seconds (e.g. 1800) or a duration (e.g. 5m, 300s)", s)
+	}
+	t.d = d
+	return nil
+}
+
 func parseFlags() (*Config, error) {
 	config := &Config{}
 
@@ -671,8 +703,9 @@ func parseFlags() (*Config, error) {
 	flag.IntVar(&config.MaxRetries, "retries", defaultRetries, "Max retries")
 	flag.IntVar(&config.MaxRetries, "r", defaultRetries, "Max retries (short)")
 	
-	timeout := flag.Int("timeout", defaultTimeout, "Download timeout in seconds")
-	flag.IntVar(timeout, "t", defaultTimeout, "Timeout (short)")
+	timeout := &timeoutValue{d: defaultTimeout * time.Second}
+	flag.Var(timeout, "timeout", "Download timeout: seconds (e.g. 1800) or duration (e.g. 5m, 300s)")
+	flag.Var(timeout, "t", "Download timeout (short)")
 	
 	flag.IntVar(&config.MaxConcurrent, "concurrent", defaultConcurrent, "Max concurrent downloads")
 	
@@ -744,8 +777,8 @@ func parseFlags() (*Config, error) {
 		config.Databases = []string{"all"}
 	}
 
-	// Convert timeout to duration
-	config.Timeout = time.Duration(*timeout) * time.Second
+	// timeoutValue already parsed seconds-or-duration into a time.Duration.
+	config.Timeout = timeout.d
 
 	// Clean and normalize the API endpoint
 	config.APIEndpoint = strings.TrimRight(config.APIEndpoint, "/ \t\n\r")

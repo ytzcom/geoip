@@ -125,7 +125,7 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 --validate-databases       Validate database selection without download
 
 # Performance
---timeout DURATION         HTTP timeout (default: 5m0s)
+--timeout VALUE            HTTP timeout: seconds (e.g. 1800) or duration (e.g. 5m, 300s) (default: 30m0s)
 --max-retries INT          Maximum retry attempts (default: 3)
 --concurrent INT           Max concurrent downloads (default: 4)
 --user-agent STRING        Custom User-Agent header
