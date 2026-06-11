@@ -22,8 +22,16 @@ import (
 	"time"
 )
 
-// Version is injected at build time via -ldflags -X
+// Version is injected at build time via -ldflags -X. The Makefile injects a
+// bare "1.1.1" while the release workflow injects a "v1.1.1" tag, so callers
+// must use displayVersion() to render it with exactly one leading "v".
 var version = "1.1.1"
+
+// displayVersion returns version with exactly one leading "v", regardless of
+// whether it was injected with or without the prefix (avoids "vv1.1.1").
+func displayVersion() string {
+	return "v" + strings.TrimPrefix(version, "v")
+}
 
 const (
 	defaultEndpoint   = "https://geoipdb.net/auth"
@@ -732,7 +740,7 @@ func parseFlags() (*Config, error) {
 
 	// Handle version flag
 	if *showVersion {
-		fmt.Printf("GeoIP Update Go v%s\n", version)
+		fmt.Printf("GeoIP Update Go %s\n", displayVersion())
 		os.Exit(0)
 	}
 
