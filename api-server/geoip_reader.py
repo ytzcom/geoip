@@ -116,10 +116,8 @@ class GeoIPReader:
             Dictionary containing GeoIP data or None if not found
         """
         result = {}
-        
-        # In full_data mode, track which databases provided which data
-        if full_data:
-            database_sources = {}
+        # Tracks which database provided each field (populated/used only in full_data mode)
+        database_sources = {}
         
         # Query MaxMind databases
         maxmind_data = self._query_maxmind(ip)
@@ -130,21 +128,15 @@ class GeoIPReader:
                 for key in maxmind_data:
                     database_sources[key] = 'MaxMind'
         
-        # Query IP2Location databases
+        # Query IP2Location databases (gap-fill: MaxMind wins overlaps;
+        # IP2Location only fills fields MaxMind left empty)
         ip2location_data = self._query_ip2location(ip)
         if ip2location_data:
-            # For overlapping fields, track both sources
-            if full_data:
-                for key in ip2location_data:
-                    if key in result and key in database_sources:
-                        # Field exists from another source, combine sources
-                        if isinstance(database_sources[key], str):
-                            database_sources[key] = [database_sources[key]]
-                        if 'IP2Location' not in database_sources[key]:
-                            database_sources[key].append('IP2Location')
-                    else:
+            for key, value in ip2location_data.items():
+                if key not in result or result[key] in (None, '', '-'):
+                    result[key] = value
+                    if full_data:
                         database_sources[key] = 'IP2Location'
-            result.update(ip2location_data)
         
         # Query IP2Proxy database
         proxy_data = self._query_ip2proxy(ip)
@@ -157,11 +149,18 @@ class GeoIPReader:
         if not result:
             return None
         
-        # Add database sources to result in full_data mode
+        # Add database sources and per-database breakdowns in full_data mode
         if full_data:
             result['_database_sources'] = database_sources
             # Also add which databases were queried
             result['_databases_available'] = self.get_database_status()
+            # Preserve each database's OWN values so the per-database view never
+            # shows another database's data (no merge contamination).
+            result['_by_database'] = {
+                'maxmind':     {k: v for k, v in maxmind_data.items()     if v not in (None, '', '-')},
+                'ip2location': {k: v for k, v in ip2location_data.items() if v not in (None, '', '-')},
+                'ip2proxy':    {k: v for k, v in proxy_data.items()       if v not in (None, '', '-')},
+            }
         
         # Filter to essential fields if not full_data
         if not full_data:
@@ -313,7 +312,7 @@ class GeoIPReader:
         logger.info("Reloading GeoIP databases...")
         
         # Close existing database connections
-        for db_name, db in self.databases.items():
+        for db in self.databases.values():
             if hasattr(db, 'close'):
                 try:
                     db.close()
