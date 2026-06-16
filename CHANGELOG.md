@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-06-16
+
+### Fixed
+- API: the web UI "By Database" view showed one database's values under another
+  database's heading. `GeoIPReader.query()` flattened MaxMind and IP2Location
+  into a single record where IP2Location overwrote MaxMind on overlapping fields
+  (country/city/region/lat/long/isp), and the response only carried a map of
+  which databases *touched* each field — so the per-database breakdown
+  mislabeled the merged value (e.g. a Canadian MaxMind IP shown as Spain under
+  "MaxMind"). Responses now include a `_by_database` block holding each
+  database's own values, and the UI renders the per-database panels strictly
+  from it. (#22)
+
+### Changed
+- API: when MaxMind and IP2Location disagree on a field, the merged/default
+  `/query` answer now prefers MaxMind and lets IP2Location fill only the gaps
+  (previously IP2Location silently overwrote MaxMind). (#22)
+
 ## [1.1.2] - 2026-06-11
 
 ### Fixed

@@ -332,7 +332,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="GeoIP Authentication API",
     description="Docker-deployable GeoIP database authentication and serving",
-    version="1.1.2",
+    version="1.1.3",
     lifespan=lifespan
 )
 
@@ -826,7 +826,7 @@ async def root():
         # Fallback to API information
         return {
             "name": "GeoIP Authentication API",
-            "version": "1.1.2",
+            "version": "1.1.3",
             "use_s3_urls": settings.use_s3_urls,
             "endpoints": {
                 "databases": "/databases",
@@ -1535,7 +1535,7 @@ if settings.enable_admin:
                 "service": {
                     "status": "healthy",
                     "uptime_seconds": uptime_seconds,
-                    "version": "1.1.2",
+                    "version": "1.1.3",
                     "debug_mode": settings.debug
                 },
                 "databases": {
