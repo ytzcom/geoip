@@ -898,33 +898,18 @@
             renderDatabaseTab(data) {
                 if (!data || data.error) return '<p class="text-gray-500 dark:text-gray-400">No data available</p>';
                 
-                const sources = data._database_sources || {};
-                
-                // Group data by source
-                const maxmindData = {};
-                const ip2locationData = {};
-                const ip2proxyData = {};
-                
-                for (const [field, source] of Object.entries(sources)) {
-                    if (field.startsWith('_')) continue;
-                    
-                    const value = data[field];
-                    if (value === null || value === undefined) continue;
-                    
-                    const sourceArray = Array.isArray(source) ? source : [source];
-                    
-                    sourceArray.forEach(s => {
-                        if (s.includes('MaxMind')) {
-                            maxmindData[field] = value;
-                        }
-                        if (s.includes('IP2Location')) {
-                            ip2locationData[field] = value;
-                        }
-                        if (s.includes('IP2Proxy')) {
-                            ip2proxyData[field] = value;
-                        }
-                    });
+                // Render each database's OWN values only. Never reconstruct from
+                // the merged result + source map — that can show one database's
+                // value under another database's heading.
+                const byDb = data._by_database;
+                if (!byDb) {
+                    return '<p class="text-gray-500 dark:text-gray-400">Per-database breakdown unavailable.</p>';
                 }
+                const cleanDb = o => Object.fromEntries(Object.entries(o || {})
+                    .filter(([k, v]) => !k.startsWith('_') && v !== null && v !== undefined && v !== '' && v !== '-'));
+                const maxmindData = cleanDb(byDb.maxmind);
+                const ip2locationData = cleanDb(byDb.ip2location);
+                const ip2proxyData = cleanDb(byDb.ip2proxy);
                 
                 let html = '<div class="space-y-6">';
                 
