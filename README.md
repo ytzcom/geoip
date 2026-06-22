@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2026--06--15%2001:01:44%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2026--06--22%2001:00:51%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-6-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
@@ -274,4 +274,4 @@ This repository's **code** is licensed under the [MIT License](LICENSE). The Geo
 
 ---
 
-**Last Update:** 2026-06-15 01:01:44 UTC
+**Last Update:** 2026-06-22 01:00:51 UTC
