@@ -71,6 +71,23 @@ This will:
 For production hosts, `docker-deploy.sh` automates pull + deploy and sources the
 API's environment as described next.
 
+#### Deployment targets (`--target`)
+
+`docker-deploy.sh` selects the compose file via `--target`:
+
+```bash
+./deploy/docker-deploy.sh                # default: --target prod (bundled nginx + SSL on 80/443)
+./deploy/docker-deploy.sh --target npm   # behind an existing nginx-proxy-manager
+```
+
+Use `--target npm` when the host already runs **nginx-proxy-manager (NPM)**. The
+`npm` stack publishes no host port — the `geoip-api` container only exposes 8080
+internally and joins the external `nginx-proxy-manager_npm` Docker network, so NPM
+must have a proxy host forwarding the public domain to `geoip-api:8080`. Health and
+auth checks run inside the container (`docker exec geoip-api …`), so they work
+regardless of whether a host port is published. In CI, the target comes from the
+`DEPLOY_TARGET` repo variable (defaults to `npm`).
+
 ### Environment configuration (dotenv.ca — optional)
 
 `deploy/docker-deploy.sh` provisions the API's `.env` in one of two ways:
@@ -121,7 +138,8 @@ infrastructure/
 │   ├── config.py                # Configuration management
 │   ├── Dockerfile               # Container image
 │   ├── docker-compose.yml       # Standard deployment
-│   ├── docker-compose.prod.yml  # Production with nginx
+│   ├── docker-compose.prod.yml  # Production with bundled nginx + SSL
+│   ├── docker-compose.npm.yml   # Behind an existing nginx-proxy-manager
 │   └── docker-compose.local.yml # Local development
 ├── deploy.sh                    # Lambda deployment script
 └── manage-api-keys.sh           # Key management script
