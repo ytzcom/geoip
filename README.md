@@ -37,7 +37,7 @@ MaxMind / IP2Location          <- your provider accounts
 | [`deploy/`](deploy/README.md) | Deploy the auth API — [Terraform/Lambda](deploy/terraform/README.md) or Docker |
 | [`k8s/`](k8s/README.md) | Kubernetes CronJob manifests for running updates in-cluster |
 | [`docker-scripts/`](docker-scripts/README.md) | Minimal Docker image bundling the clients and validators |
-| [`docs/`](docs/) | Guides: [GitHub Action](docs/GITHUB_ACTION.md) · [notifications](docs/NOTIFICATIONS.md) · [releases](docs/RELEASE_PROCESS.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security](docs/SECURITY.md) · [Docker cleanup](docs/DOCKER_CLEANUP.md) |
+| [`docs/`](docs/) | Guides: [GitHub Action](docs/GITHUB_ACTION.md) · [Laravel integration](docs/LARAVEL_INTEGRATION.md) · [notifications](docs/NOTIFICATIONS.md) · [releases](docs/RELEASE_PROCESS.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security](docs/SECURITY.md) · [Docker cleanup](docs/DOCKER_CLEANUP.md) |
 
 ## 📥 Using the databases
 
@@ -182,6 +182,8 @@ print(f"Country: {result.country_long}")
 
 ## 🛠️ Integration
 
+**Laravel apps:** see **[docs/LARAVEL_INTEGRATION.md](docs/LARAVEL_INTEGRATION.md)** for the full `torann/geoip` + local-reader + auto-refresh pattern (paste-into-an-agent ready).
+
 ### CDN/CloudFront Integration
 
 ```javascript
@@ -269,7 +271,7 @@ This repository's **code** is licensed under the [MIT License](LICENSE). The Geo
 
 ## 🔗 Links
 
-- [CLI tools](cli/README.md) · [GitHub Action](docs/GITHUB_ACTION.md) · [Deployment](deploy/README.md) · [Contributing](CONTRIBUTING.md)
+- [CLI tools](cli/README.md) · [GitHub Action](docs/GITHUB_ACTION.md) · [Laravel integration](docs/LARAVEL_INTEGRATION.md) · [Deployment](deploy/README.md) · [Contributing](CONTRIBUTING.md)
 - [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases) · [IP2Location](https://www.ip2location.com/)
 
 ---
