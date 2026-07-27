@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2026--07--20%2000:39:30%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2026--07--27%2000:40:54%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-6-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
@@ -37,7 +37,7 @@ MaxMind / IP2Location          <- your provider accounts
 | [`deploy/`](deploy/README.md) | Deploy the auth API — [Terraform/Lambda](deploy/terraform/README.md) or Docker |
 | [`k8s/`](k8s/README.md) | Kubernetes CronJob manifests for running updates in-cluster |
 | [`docker-scripts/`](docker-scripts/README.md) | Minimal Docker image bundling the clients and validators |
-| [`docs/`](docs/) | Guides: [GitHub Action](docs/GITHUB_ACTION.md) · [Laravel integration](docs/LARAVEL_INTEGRATION.md) · [notifications](docs/NOTIFICATIONS.md) · [releases](docs/RELEASE_PROCESS.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security](docs/SECURITY.md) · [Docker cleanup](docs/DOCKER_CLEANUP.md) |
+| [`docs/`](docs/) | Guides: [GitHub Action](docs/GITHUB_ACTION.md) · [notifications](docs/NOTIFICATIONS.md) · [releases](docs/RELEASE_PROCESS.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security](docs/SECURITY.md) · [Docker cleanup](docs/DOCKER_CLEANUP.md) |
 
 ## 📥 Using the databases
 
@@ -124,7 +124,7 @@ The API loads its settings from an `.env` file. Provide it manually (`secrets/.e
 |----------|----------|--------|------|-------------|
 | GeoIP2-City | MaxMind | MMDB | 121MB | City-level IP geolocation data |
 | GeoIP2-Country | MaxMind | MMDB | 8MB | Country-level IP geolocation data |
-| GeoIP2-ISP | MaxMind | MMDB | 19MB | ISP and organization data |
+| GeoIP2-ISP | MaxMind | MMDB | 18MB | ISP and organization data |
 | GeoIP2-Connection-Type | MaxMind | MMDB | 13MB | Connection type data |
 | DB23 IPv4 | IP2Location | BIN | 641MB | Comprehensive IPv4 geolocation data |
 | DB23 IPv6 | IP2Location | BIN | 828MB | Comprehensive IPv6 geolocation data |
@@ -181,8 +181,6 @@ print(f"Country: {result.country_long}")
 ```
 
 ## 🛠️ Integration
-
-**Laravel apps:** see **[docs/LARAVEL_INTEGRATION.md](docs/LARAVEL_INTEGRATION.md)** for the full `torann/geoip` + local-reader + auto-refresh pattern (paste-into-an-agent ready).
 
 ### CDN/CloudFront Integration
 
@@ -271,9 +269,9 @@ This repository's **code** is licensed under the [MIT License](LICENSE). The Geo
 
 ## 🔗 Links
 
-- [CLI tools](cli/README.md) · [GitHub Action](docs/GITHUB_ACTION.md) · [Laravel integration](docs/LARAVEL_INTEGRATION.md) · [Deployment](deploy/README.md) · [Contributing](CONTRIBUTING.md)
+- [CLI tools](cli/README.md) · [GitHub Action](docs/GITHUB_ACTION.md) · [Deployment](deploy/README.md) · [Contributing](CONTRIBUTING.md)
 - [MaxMind GeoIP2](https://www.maxmind.com/en/geoip2-databases) · [IP2Location](https://www.ip2location.com/)
 
 ---
 
-**Last Update:** 2026-07-20 00:39:30 UTC
+**Last Update:** 2026-07-27 00:40:54 UTC
