@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2026--09--07%2000:36:16%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2026--09--14%2000:36:03%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-6-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
@@ -125,7 +125,7 @@ The API loads its settings from an `.env` file. Provide it manually (`secrets/.e
 | GeoIP2-City | MaxMind | MMDB | 121MB | City-level IP geolocation data |
 | GeoIP2-Country | MaxMind | MMDB | 8MB | Country-level IP geolocation data |
 | GeoIP2-ISP | MaxMind | MMDB | 19MB | ISP and organization data |
-| GeoIP2-Connection-Type | MaxMind | MMDB | 15MB | Connection type data |
+| GeoIP2-Connection-Type | MaxMind | MMDB | 16MB | Connection type data |
 | DB23 IPv4 | IP2Location | BIN | 633MB | Comprehensive IPv4 geolocation data |
 | DB23 IPv6 | IP2Location | BIN | 822MB | Comprehensive IPv6 geolocation data |
 | PX2 IPv4 | IP2Location | BIN | 366MB | IPv4 proxy detection data |
@@ -274,4 +274,4 @@ This repository's **code** is licensed under the [MIT License](LICENSE). The Geo
 
 ---
 
-**Last Update:** 2026-09-07 00:36:16 UTC
+**Last Update:** 2026-09-14 00:36:03 UTC
