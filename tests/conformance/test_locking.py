@@ -41,6 +41,23 @@ def test_second_run_waits_then_finds_everything_unchanged(client, server, target
     assert "Unchanged: GeoIP2-City.mmdb" in second.stdout + second.stderr
 
 
+def test_fallback_lock_of_a_live_run_is_not_stolen(client, server, target):
+    env = _fallback_env(client, True, GEOIP_LOCK_STALE_SECONDS="5")
+    server.slow("GeoIP2-City.mmdb", 20)
+    extra = ["only_changed", ("lock_file", _lock(target))]
+    first = start(client, server, target, extra=extra, env=env)
+    wait_for_bytes(server, "GeoIP2-City.mmdb", first)
+    server_full_before = server.stats("GeoIP2-City.mmdb")["full"]
+    second = run(client, server, target, extra=extra + [("lock_timeout", 30)], env=env)
+    first_output, _ = first.communicate(timeout=120)
+    assert first.returncode == 0, first_output
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert server.stats("GeoIP2-City.mmdb")["full"] == server_full_before
+    for name in ("GeoIP2-City.mmdb", "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"):
+        assert f"Unchanged: {name}" in second.stdout + second.stderr
+    assert not Path(_lock(target) + ".d").exists()
+
+
 def test_lock_timeout_exits_1_with_message(client, server, target):
     server.slow("GeoIP2-City.mmdb", 8)
     first = start(client, server, target, extra=[("lock_file", _lock(target))])

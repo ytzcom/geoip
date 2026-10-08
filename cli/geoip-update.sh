@@ -349,12 +349,35 @@ release_lock() {
 }
 
 LOCK_DIR_HELD=""
+LOCK_HEARTBEAT_PID=""
 
 lock_release() {
+    if [ -n "$LOCK_HEARTBEAT_PID" ]; then
+        kill "$LOCK_HEARTBEAT_PID" 2>/dev/null || :
+        wait "$LOCK_HEARTBEAT_PID" 2>/dev/null || :
+        LOCK_HEARTBEAT_PID=""
+    fi
     if [ -n "$LOCK_DIR_HELD" ]; then
         rm -rf "$LOCK_DIR_HELD"
         LOCK_DIR_HELD=""
     fi
+}
+
+lock_heartbeat() {
+    trap - EXIT HUP INT TERM
+    set +e
+    interval=$(($1 / 5))
+    [ "$interval" -ge 1 ] || interval=1
+    hb_sleep=""
+    trap '[ -z "$hb_sleep" ] || kill "$hb_sleep" 2>/dev/null; exit 0' TERM
+    while :; do
+        sleep "$interval" &
+        hb_sleep=$!
+        wait "$hb_sleep"
+        hb_sleep=""
+        kill -0 "$2" 2>/dev/null || exit 0
+        date +%s > "$3/started.hb" 2>/dev/null && mv "$3/started.hb" "$3/started" 2>/dev/null
+    done
 }
 
 lock_acquire() {
@@ -374,7 +397,7 @@ lock_acquire() {
         printf 'pid=%s host=%s started=%s\n' "$$" "$(uname -n)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_FILE"
         return 0
     fi
-    stale="${GEOIP_LOCK_STALE_SECONDS:-$((TIMEOUT_SECONDS + 300))}"
+    stale="${GEOIP_LOCK_STALE_SECONDS:-300}"
     until mkdir "$LOCK_FILE.d" 2>/dev/null; do
         now=$(date +%s)
         held=$(cat "$LOCK_FILE.d/started" 2>/dev/null || echo "$now")
@@ -394,6 +417,8 @@ lock_acquire() {
     done
     date +%s > "$LOCK_FILE.d/started.tmp" && mv "$LOCK_FILE.d/started.tmp" "$LOCK_FILE.d/started"
     LOCK_DIR_HELD="$LOCK_FILE.d"
+    lock_heartbeat "$stale" "$$" "$LOCK_DIR_HELD" </dev/null >/dev/null 2>&1 9>&- &
+    LOCK_HEARTBEAT_PID=$!
 }
 
 MANIFEST_ENTRIES=""
