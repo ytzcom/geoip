@@ -169,6 +169,51 @@ When you source `entrypoint-helper.sh`, these functions become available:
 - **`GEOIP_QUIET_MODE`** - Suppress output (default: `false`)
 - **`GEOIP_LOG_FILE`** - Log file path (optional)
 
+### Read by every bundled client
+
+Each client (Go, Python, Bash, POSIX, PowerShell) reads these from its environment as the default for the matching option; options given on the command line win:
+
+- **`GEOIP_CONCURRENT`** - Parallel downloads (default: `2`)
+- **`GEOIP_TIMEOUT`** - Download timeout in seconds (see the per-client table below)
+- **`GEOIP_MAX_RETRIES`** - Maximum retry attempts (default: `3`)
+- **`GEOIP_ONLY_CHANGED`** - Download only databases that changed since the last run (`true`, `1`, `yes`)
+- **`GEOIP_LOCK_FILE`** - Exclusive lock on a shared path, for example `$GEOIP_TARGET_DIR/.geoip-update.lock`
+- **`GEOIP_LOCK_TIMEOUT`** - Seconds to wait for `GEOIP_LOCK_FILE` (default: `1800`)
+
+`GEOIP_API_KEY`, `GEOIP_API_ENDPOINT`, `GEOIP_TARGET_DIR`, `GEOIP_DATABASES` and `GEOIP_LOG_FILE` are read by every client too.
+
+## 🔁 Change Detection and Shared-Path Locking
+
+Recommended when several containers share the database volume, and for daily updates:
+
+```yaml
+    environment:
+      GEOIP_ONLY_CHANGED: "true"
+      GEOIP_LOCK_FILE: /app/resources/geoip/.geoip-update.lock
+```
+
+`geoip_download_databases` runs the selected client in the container's environment, so these variables apply to it. `setup-cron.sh` writes the scheduled command with `--api-key`, `--endpoint`, `--directory`, `--quiet` and `--databases` only.
+
+| Purpose | Go / Python / Bash / POSIX | PowerShell | Environment |
+|---------|----------------------------|------------|-------------|
+| Download only changed files | `--only-changed` | `-OnlyChanged` | `GEOIP_ONLY_CHANGED` |
+| Ignore change detection | `--force` | `-Force` | — |
+| Lock on a shared path | `--lock-file PATH` | `-LockFile` | `GEOIP_LOCK_FILE` |
+| Lock wait limit | `--lock-timeout SECONDS` | `-LockTimeout` | `GEOIP_LOCK_TIMEOUT` |
+
+- **Manifest.** Change detection keeps `<target>/.geoip-update.json` (ETag, `Last-Modified` and size per database) in a layout every client reads and writes, so the clients can take turns on one directory. A database whose conditional request (`If-None-Match`) gets `304` logs `Unchanged: <name>` and is left as it is. `--force` downloads everything. An unreadable manifest is treated as absent. A run where everything is unchanged exits `0`.
+- **Lock.** The lock file is an exclusive kernel lock held until the client exits; the operating system releases it on any exit, including `kill -9`. A second run waits up to the lock timeout, then logs `Timed out after N s waiting for lock PATH` and exits `1`. A lock file together with `--no-lock` / `-NoLock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- **Shell clients (Bash, POSIX).** Where `flock` is missing, they lock by creating the directory `PATH.d`; the holder rewrites its timestamp every 60 s and a waiter breaks the directory as stale once the timestamp is older than 300 s, so a killed run's directory is broken after about 5 minutes and a live run's never is. With `flock`, if only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+- **Staging.** Every client downloads to `<target>/<name>.part` and renames it into place, so the application never reads a partial file. A failed download removes its `.part`.
+
+| Client | `--timeout` / `-Timeout` |
+|--------|--------------------------|
+| Bash, POSIX | Overall download ceiling in seconds across retry attempts (default `1800`); `0` means no ceiling; a value that is not a plain decimal number is passed to curl untouched |
+| Go, Python | Does not abort a stalled transfer |
+| PowerShell | Does not abort a stalled transfer; `-Timeout 0` fails the download |
+
+PowerShell `-Quiet` keeps the exit codes of a run without it. Details: [CLI Overview](../cli/README.md#-change-detection-shared-path-locking-and-staging).
+
 ## 📅 Cron Support
 
 The `setup-cron.sh` script automatically detects and configures:

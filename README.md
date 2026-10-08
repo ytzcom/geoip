@@ -67,6 +67,14 @@ curl -s -X POST https://geoipdb.net/auth \
   -d '{"databases": "all"}'
 ```
 
+**Daily runs and shared volumes.** Every client (POSIX sh, Bash, Python, Go, PowerShell) can download only the databases that changed and lock a path that every updater of the directory shares:
+
+```bash
+./cli/geoip-update.sh -k YOUR_API_KEY -d /var/lib/geoip --only-changed --lock-file /var/lib/geoip/.geoip-update.lock
+```
+
+`--only-changed` (PowerShell `-OnlyChanged`, env `GEOIP_ONLY_CHANGED`) keeps a manifest, `<target>/.geoip-update.json`, and skips a database the server reports unchanged; `--force` (`-Force`) downloads everything. `--lock-file PATH` (`-LockFile`, `GEOIP_LOCK_FILE`) takes an exclusive kernel lock that is released when the run exits, even after `kill -9`; a second run waits up to `--lock-timeout SECONDS` (`-LockTimeout`, `GEOIP_LOCK_TIMEOUT`, default `1800`) and then exits `1`, and it cannot be combined with `--no-lock`. Downloads are staged as `<target>/<name>.part` and renamed into place, so readers never see a partial file. All clients read the same environment variables (`GEOIP_API_KEY`, `GEOIP_API_ENDPOINT`, `GEOIP_TARGET_DIR`, `GEOIP_DATABASES`, `GEOIP_CONCURRENT`, `GEOIP_LOG_FILE`, `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`, `GEOIP_ONLY_CHANGED`, `GEOIP_LOCK_FILE`, `GEOIP_LOCK_TIMEOUT`). Details per client, including what `--timeout` does in each: [cli/README.md](cli/README.md#-change-detection-shared-path-locking-and-staging).
+
 **Self-hosting your own deployment?** Point the same clients at your endpoint with `GEOIP_API_ENDPOINT` (or the Action's `auth-endpoint`) — see **Running your own instance** below.
 
 See **[cli/README.md](cli/README.md)** and **[docs/GITHUB_ACTION.md](docs/GITHUB_ACTION.md)** for every option.

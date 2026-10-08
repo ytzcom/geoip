@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -X main.buildDate=${BUILD_DATE} \
         -X main.gitCommit=${VCS_REF}" \
     -o geoip-updater \
-    main.go
+    .
 
 # Create minimal runtime image
 FROM scratch

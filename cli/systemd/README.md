@@ -70,7 +70,25 @@ GEOIP_API_ENDPOINT=https://your-api.execute-api.region.amazonaws.com/v1/auth
 GEOIP_TARGET_DIR=/var/lib/geoip
 GEOIP_LOG_FILE=/var/log/geoip/update.log
 #GEOIP_DATABASES=GeoIP2-City.mmdb,GeoIP2-Country.mmdb
+
+# Recommended for daily runs
+#GEOIP_ONLY_CHANGED=true
+#GEOIP_LOCK_FILE=/var/lib/geoip/.geoip-update.lock
 ```
+
+Every client (Bash, Python, Go) reads the same variables: `GEOIP_API_KEY`, `GEOIP_API_ENDPOINT`, `GEOIP_TARGET_DIR`, `GEOIP_DATABASES`, `GEOIP_CONCURRENT`, `GEOIP_LOG_FILE`, `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`, `GEOIP_ONLY_CHANGED`, `GEOIP_LOCK_FILE` and `GEOIP_LOCK_TIMEOUT`. Options in `ExecStart` win over them.
+
+### Change Detection and Shared-Path Locking
+
+`GEOIP_ONLY_CHANGED=true` (or `--only-changed` in `ExecStart`) downloads only databases that changed since the last run; `--force` downloads everything regardless. `GEOIP_LOCK_FILE` (or `--lock-file PATH`) takes a lock on a path every run shares, including manual runs outside the unit; `GEOIP_LOCK_TIMEOUT` (or `--lock-timeout SECONDS`, default `1800`) limits the wait. The unit sets `PrivateTmp=true`, so its default lock in `/tmp` is not seen by runs outside the unit; a lock file under `/var/lib/geoip` is.
+
+- **Manifest.** With change detection on, the client keeps `<target>/.geoip-update.json` with each database's ETag, `Last-Modified` and size, in the same layout every client writes. A database is skipped with `Unchanged: <name>` when the server answers its conditional request (`If-None-Match`) with `304`. It downloads when the file is missing, the manifest has no entry, or the size on disk differs. The manifest is written once at the end of the run; an unreadable manifest is treated as absent. A run where everything is unchanged exits `0`.
+- **Lock.** A lock file takes an exclusive kernel lock that the operating system releases on any exit, including `kill -9`, so a crashed run never blocks the next one. A second run waits up to the lock timeout (default `1800` s), then logs `Timed out after N s waiting for lock PATH` and exits `1`. Setting `GEOIP_LOCK_FILE` together with `--no-lock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- **Staging.** Downloads go to `<target>/<name>.part` and are renamed into place, so an application reading `/var/lib/geoip` never sees a partial file. A failed download removes its `.part`.
+- **`GEOIP_TIMEOUT` / `--timeout`** in Python and Go does not abort a stalled transfer.
+- **Bash script:** where `flock` is not installed, the lock is the directory `PATH.d`, removed on exit; the holder rewrites its timestamp every 60 s and a waiter breaks the directory as stale once the timestamp is older than 300 s, so a killed run's directory is broken after about 5 minutes and a live run's never is. With `flock`, if only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`). For the Bash script, `--timeout` is the overall download ceiling across retry attempts; `0` means no ceiling, and a value that is not a plain decimal number is passed to curl untouched.
+
+Details for every client: [CLI Overview](../README.md#-change-detection-shared-path-locking-and-staging).
 
 ### Timer Schedule
 

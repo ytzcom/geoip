@@ -54,6 +54,14 @@ chmod +x geoip-update.py
 | `GEOIP_DATABASES` | `all` | Databases to download |
 | `GEOIP_CONFIG_FILE` | - | Path to configuration file |
 | `GEOIP_LOG_FILE` | - | Log file path |
+| `GEOIP_CONCURRENT` | `2` | Max concurrent downloads (`--concurrent`) |
+| `GEOIP_TIMEOUT` | `1800` | `--timeout` |
+| `GEOIP_MAX_RETRIES` | `3` | `--retries` |
+| `GEOIP_ONLY_CHANGED` | - | `--only-changed` when `true`, `1` or `yes` |
+| `GEOIP_LOCK_FILE` | - | `--lock-file` |
+| `GEOIP_LOCK_TIMEOUT` | `1800` | `--lock-timeout` |
+
+`GEOIP_DATABASES` is a comma-separated list. Command-line options always win over environment variables.
 
 ### Configuration File
 
@@ -125,11 +133,11 @@ Use configuration file:
 ```bash
 # Performance
 --concurrent NUM           Max concurrent downloads (default: 2)
---timeout SECONDS          Overall download ceiling per file (default: 1800; aborts early only on stall)
+--timeout SECONDS          Download timeout (default: 1800; does not abort a stalled transfer)
 --chunk-size BYTES         Download chunk size (default: 8192)
 
 # Retry Logic
---max-retries NUM          Maximum retry attempts (default: 3)
+-r, --retries NUM          Maximum retry attempts (default: 3)
 --retry-delay SECONDS      Initial retry delay (default: 2.0)
 --retry-multiplier FLOAT   Retry delay multiplier (default: 2.0)
 
@@ -139,12 +147,40 @@ Use configuration file:
 -v, --verbose             Detailed output and debugging
 --log-level LEVEL         Log level (DEBUG, INFO, WARNING, ERROR)
 
+# Change detection and locking
+--only-changed            Download only databases that changed since the last run
+--force                   Download everything, ignoring --only-changed
+--lock-file PATH          Exclusive lock on a shared path instead of the default lock
+--lock-timeout SECONDS    Seconds to wait for --lock-file (default: 1800)
+
 # Behavior
 --no-lock                 Skip lock file (allows concurrent runs)
 --test-connection         Test API connectivity and exit
 --dry-run                 Show what would be downloaded without action
 --force-update            Download files even if up-to-date
 ```
+
+## 🔁 Change Detection and Shared-Path Locking
+
+Recommended for daily runs and for a target directory shared between hosts or containers:
+
+```bash
+./geoip-update.py --only-changed --lock-file /var/lib/geoip/.geoip-update.lock --directory /var/lib/geoip
+```
+
+| Option | Environment | YAML key | Description |
+|--------|-------------|----------|-------------|
+| `--only-changed` | `GEOIP_ONLY_CHANGED` (`true`, `1`, `yes`) | `only_changed` | Download only databases that changed since the last run |
+| `--force` | — | — | Download everything, ignoring `--only-changed` |
+| `--lock-file PATH` | `GEOIP_LOCK_FILE` | `lock_file` | Exclusive lock on a shared path |
+| `--lock-timeout SECONDS` | `GEOIP_LOCK_TIMEOUT` | `lock_timeout` | Lock wait limit (default `1800`) |
+
+- **Manifest.** `--only-changed` keeps `<target>/.geoip-update.json` with each database's ETag, `Last-Modified` and size, in the same layout every client writes. A database is skipped with `Unchanged: <name>` when the server answers its conditional request (`If-None-Match`) with `304`. It downloads when `--force` is set, the file is missing, the manifest has no entry, or the size on disk differs. The manifest is written once at the end of the run; an unreadable manifest is treated as absent. A run where everything is unchanged exits `0`. Without `--only-changed` no manifest is read or written.
+- **Lock.** `--lock-file PATH` takes an exclusive kernel lock on `PATH` (`fcntl.flock`; `msvcrt.locking` on Windows) and holds it until the process exits; the operating system releases it on any exit, including `kill -9`. A second run waits up to `--lock-timeout` seconds, then logs `Timed out after N s waiting for lock PATH` and exits `1`. Without `--lock-file` the default lock and `--no-lock` work as before. `--lock-file` (or `GEOIP_LOCK_FILE`) together with `--no-lock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- **Staging.** Downloads go to `<target>/<name>.part` and are renamed into place, so readers never see a partial file. A failed download removes its `.part`. A resumed download sends `If-Range`, so an object that changed mid-download restarts from byte 0.
+- **`--timeout`** does not abort a stalled transfer: a download that stalls and then continues still completes.
+
+Details for every client: [CLI Overview](../README.md#-change-detection-shared-path-locking-and-staging).
 
 ## 📋 Database Selection
 
@@ -200,10 +236,10 @@ The tool supports intelligent database name resolution:
 ### Concurrent Downloads
 
 ```bash
-# Conservative (good for limited bandwidth)
+# Default (good for limited bandwidth)
 ./geoip-update.py --concurrent 2
 
-# Balanced (default)
+# Balanced
 ./geoip-update.py --concurrent 4
 
 # Aggressive (fast networks only)
@@ -292,7 +328,7 @@ volumes:
 - Size limit enforcement
 
 ### Safe File Handling
-- Atomic file updates (temp → final)
+- Atomic file updates (`<target>/<name>.part` → `<target>/<name>`)
 - Checksum verification (when available)
 - Permission preservation
 - Backup creation option

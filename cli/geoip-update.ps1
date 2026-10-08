@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Downloads GeoIP databases from authenticated API
 
@@ -17,16 +17,16 @@
     Target directory for downloads (default: .\geoip)
 
 .PARAMETER Databases
-    Array of database names or "all" (default: all)
+    Array of database names or "all", comma-separated names accepted (default: $env:GEOIP_DATABASES or all)
 
 .PARAMETER LogFile
     Path to log file for output
 
 .PARAMETER MaxRetries
-    Maximum number of retry attempts (default: 3)
+    Maximum number of retry attempts (default: $env:GEOIP_MAX_RETRIES or 3)
 
 .PARAMETER Timeout
-    Per-request download timeout in seconds (default: 1800). Raised from 300 so
+    Per-request download timeout in seconds (default: $env:GEOIP_TIMEOUT or 1800). Raised from 300 so
     large databases finish on slow links (Invoke-WebRequest has no stall timeout).
 
 .PARAMETER Quiet
@@ -34,6 +34,20 @@
 
 .PARAMETER NoLock
     Don't use lock file to prevent concurrent runs
+
+.PARAMETER OnlyChanged
+    Download only databases whose remote copy changed, tracked in <TargetDirectory>\.geoip-update.json
+    (or set $env:GEOIP_ONLY_CHANGED to true, 1 or yes)
+
+.PARAMETER Force
+    Download every database even with -OnlyChanged
+
+.PARAMETER LockFile
+    Take an exclusive lock on this path, shared by every run that uses it, instead of the
+    default lock (default: $env:GEOIP_LOCK_FILE). Cannot be combined with -NoLock.
+
+.PARAMETER LockTimeout
+    Seconds to wait for -LockFile before exiting 1 (default: $env:GEOIP_LOCK_TIMEOUT or 1800)
 
 .PARAMETER ValidateOnly
     Validate existing database files without downloading
@@ -66,7 +80,7 @@
 
 .NOTES
     Author: GeoIP Update Script
-    Version: 1.1.3
+    Version: 1.2.0
 #>
 
 [CmdletBinding()]
@@ -105,11 +119,25 @@ param(
     [switch]$CheckNames,
     
     [Parameter()]
-    [switch]$ListDatabases
+    [switch]$ListDatabases,
+
+    [Parameter()]
+    [switch]$OnlyChanged,
+
+    [Parameter()]
+    [switch]$Force,
+
+    [Parameter()]
+    [string]$LockFile,
+
+    [Parameter()]
+    [int]$LockTimeout = 1800
 )
 
 # Set error action preference
 $ErrorActionPreference = 'Stop'
+
+Add-Type -AssemblyName System.Net.Http
 
 # Clean and normalize the API endpoint
 $ApiEndpoint = $ApiEndpoint.TrimEnd('/', ' ', "`t", "`n", "`r")
@@ -127,9 +155,12 @@ elseif (-not $ApiEndpoint.EndsWith('/auth')) {
 # Script configuration
 $script:ScriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
 $script:TempPath = if ($env:TEMP) { $env:TEMP } elseif ($env:TMPDIR) { $env:TMPDIR } elseif ($env:TMP) { $env:TMP } else { "/tmp" }
-$script:LockFile = Join-Path $script:TempPath "geoip-update.lock"
-$script:TempDirectory = Join-Path $script:TempPath "geoip-update-$(Get-Random)"
+$script:PidLockFile = Join-Path $script:TempPath "geoip-update.lock"
 $script:DownloadJobs = @()
+$script:MaxParallel = 2
+$script:SharedLock = $null
+$script:Manifest = $null
+$script:ManifestUpdates = $null
 $script:ExitCode = 0
 
 # Logging functions
@@ -177,7 +208,7 @@ function Write-LogMessage {
     }
     elseif ($Level -eq 'ERROR') {
         # Always output errors, even in quiet mode
-        Write-Error $Message
+        [Console]::Error.WriteLine($Message)
     }
 }
 
@@ -267,7 +298,11 @@ function Set-ApiKeyInCredentialManager {
         [Parameter(Mandatory)]
         [string]$ApiKey
     )
-    
+
+    if (-not (Get-Command cmdkey -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
     try {
         # Use cmdkey to store credential (available on all Windows versions)
         $result = & cmdkey /generic:GeoIP-API-Key /user:GeoIP-API-Key /pass:$ApiKey 2>&1
@@ -364,9 +399,9 @@ function New-LockFile {
     
     $currentPid = $PID
     
-    if (Test-Path -Path $script:LockFile) {
+    if (Test-Path -Path $script:PidLockFile) {
         try {
-            $lockPid = Get-Content -Path $script:LockFile -ErrorAction Stop
+            $lockPid = Get-Content -Path $script:PidLockFile -ErrorAction Stop
             
             # Check if process is still running
             $process = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
@@ -375,17 +410,17 @@ function New-LockFile {
             }
             else {
                 Write-LogMessage -Level WARN -Message "Removing stale lock file (PID: $lockPid)"
-                Remove-Item -Path $script:LockFile -Force
+                Remove-Item -Path $script:PidLockFile -Force
             }
         }
         catch {
             Write-LogMessage -Level WARN -Message "Error reading lock file: $_"
-            Remove-Item -Path $script:LockFile -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $script:PidLockFile -Force -ErrorAction SilentlyContinue
         }
     }
     
     try {
-        Set-Content -Path $script:LockFile -Value $currentPid -Force
+        Set-Content -Path $script:PidLockFile -Value $currentPid -Force
         Write-LogMessage -Level INFO -Message "Acquired lock (PID: $currentPid)"
         return $true
     }
@@ -399,17 +434,160 @@ function Remove-LockFile {
         return
     }
     
-    if (Test-Path -Path $script:LockFile) {
+    if (Test-Path -Path $script:PidLockFile) {
         try {
-            $lockPid = Get-Content -Path $script:LockFile -ErrorAction Stop
+            $lockPid = Get-Content -Path $script:PidLockFile -ErrorAction Stop
             if ($lockPid -eq $PID) {
-                Remove-Item -Path $script:LockFile -Force
+                Remove-Item -Path $script:PidLockFile -Force
                 Write-LogMessage -Level INFO -Message "Released lock"
             }
         }
         catch {
             # Ignore errors when removing lock file
         }
+    }
+}
+
+function Test-FileBusy {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+    $e = $ErrorRecord.Exception
+    while ($e.InnerException -and -not ($e -is [System.IO.IOException])) { $e = $e.InnerException }
+    if (-not ($e -is [System.IO.IOException])) { return $false }
+    $code = $e.HResult -band 0xFFFF
+    return ($code -eq 32 -or $code -eq 33 -or $e.HResult -eq 11 -or $e.HResult -eq 35)
+}
+
+function Enter-SharedLock {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$DisplayPath,
+        [int]$Timeout
+    )
+
+    $waited = 0
+    while ($true) {
+        try {
+            $stream = [System.IO.FileStream]::new($Path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            break
+        }
+        catch {
+            if (-not (Test-FileBusy $_)) {
+                $cause = $_.Exception
+                if ($cause -is [System.Management.Automation.MethodInvocationException] -and $cause.InnerException) { $cause = $cause.InnerException }
+                throw "Cannot open lock file ${DisplayPath}: $($cause.Message)"
+            }
+            if ($waited -ge $Timeout) { throw "Timed out after $Timeout s waiting for lock $DisplayPath" }
+            Start-Sleep -Seconds 1
+            $waited++
+        }
+    }
+
+    try {
+        $stream.SetLength(0)
+        $info = [System.Text.Encoding]::UTF8.GetBytes(("pid={0} host={1} started={2}`n" -f $PID, [System.Net.Dns]::GetHostName(), [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture)))
+        $stream.Write($info, 0, $info.Length)
+        $stream.Flush()
+    }
+    catch {
+        Write-LogMessage -Level WARN -Message "Could not write lock file ${DisplayPath}: $_"
+    }
+    return $stream
+}
+
+$script:ManifestName = '.geoip-update.json'
+
+function New-OrdinalTable {
+    return [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
+}
+
+function Read-Manifest {
+    param([string]$Dir)
+
+    $result = New-OrdinalTable
+    $path = Join-Path $Dir $script:ManifestName
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $result }
+    try {
+        $doc = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        foreach ($p in $doc.files.PSObject.Properties) {
+            $result[$p.Name] = @{ etag = [string]$p.Value.etag; last_modified = [string]$p.Value.last_modified; size = [long]$p.Value.size }
+        }
+    }
+    catch {
+        $result = New-OrdinalTable
+    }
+    return $result
+}
+
+function Test-ManifestValue {
+    param([string]$Value)
+    return -not ($Value -match '["\\|\x00-\x1f\x7f]')
+}
+
+function Write-Manifest {
+    param([string]$Dir, [hashtable]$Entries)
+
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $Entries.Keys) {
+        $e = $Entries[$name]
+        if ((Test-ManifestValue $name) -and $e.etag -and -not $e.etag.StartsWith('W/') -and (Test-ManifestValue $e.etag) -and (Test-ManifestValue $e.last_modified)) {
+            $names.Add($name)
+        }
+    }
+    $names.Sort([System.StringComparer]::Ordinal)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('{')
+    $lines.Add('  "version": 1,')
+    $lines.Add('  "files": {')
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $e = $Entries[$names[$i]]
+        $comma = if ($i -lt $names.Count - 1) { ',' } else { '' }
+        $lines.Add([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, '    "{0}": {{"etag": "{1}", "last_modified": "{2}", "size": {3}}}{4}', $names[$i], $e.etag, $e.last_modified, [long]$e.size, $comma))
+    }
+    $lines.Add('  }')
+    $lines.Add('}')
+
+    $target = Join-Path $Dir $script:ManifestName
+    $part = "$target.part"
+    try {
+        [System.IO.File]::WriteAllText($part, ($lines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $part -Destination $target -Force
+    }
+    catch {
+        Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
+function Test-Unchanged {
+    param(
+        [Parameter(Mandatory)][string]$DatabaseName,
+        [Parameter(Mandatory)][string]$Url
+    )
+
+    $entry = $script:Manifest[$DatabaseName]
+    if (-not $entry -or -not $entry.etag) { return $false }
+    $file = Join-Path $script:TargetPath $DatabaseName
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $file).Length -ne $entry.size) { return $false }
+
+    $client = $null; $resp = $null
+    try {
+        $client = [System.Net.Http.HttpClient]::new()
+        $client.Timeout = [TimeSpan]::FromSeconds($(if ($Timeout -gt 0) { $Timeout } else { 60 }))
+        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
+        $req.Headers.Range = [System.Net.Http.Headers.RangeHeaderValue]::new(0, 0)
+        [void]$req.Headers.TryAddWithoutValidation('If-None-Match', '"' + $entry.etag + '"')
+        $resp = $client.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        return ([int]$resp.StatusCode -eq 304)
+    }
+    catch {
+        Write-LogMessage -Level INFO -Message "${DatabaseName}: change check failed: $_"
+        return $false
+    }
+    finally {
+        if ($resp) { $resp.Dispose() }
+        if ($client) { $client.Dispose() }
     }
 }
 
@@ -501,38 +679,73 @@ function Invoke-HttpRequest {
     Exit-WithError -Message "Failed after $MaxRetries attempts"
 }
 
-# Download $Url to $OutFile, resuming on interruption/stall via an HTTP Range
-# request instead of restarting from byte 0, so large databases complete on
-# flaky links. Retries while the transfer keeps making progress; gives up only
-# after a few consecutive no-progress attempts. Returns $true on success.
+# Download $Url to <Directory>\<Name>.part, resuming on interruption/stall via
+# an HTTP Range request instead of restarting from byte 0, so large databases
+# complete on flaky links. Retries while the transfer keeps making progress;
+# gives up only after a few consecutive no-progress attempts. On success returns
+# the still-open staging stream with its path, ETag, Last-Modified and size;
+# on failure removes the staging file and returns $null.
 function Invoke-ResumableDownload {
     param(
         [Parameter(Mandatory)][string]$Url,
-        [Parameter(Mandatory)][string]$OutFile,
-        [int]$TimeoutSec = 1800
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$Name,
+        [int]$TimeoutSec = 1800,
+        [int]$MaxRestarts = 3
     )
 
     $maxNoProgress = 3
     $hardCap = 50
     $noProgress = 0
+    $restarts = 0
     $attempt = 0
-    $leaf = Split-Path -Path $OutFile -Leaf
-    if (Test-Path -LiteralPath $OutFile) { Remove-Item -LiteralPath $OutFile -Force }
+    $success = $false
+    $etag = ''
+    $lastModified = ''
+    $leaf = $Name
+
+    $getHeader = {
+        param($Response, [string]$HeaderName)
+        $values = $null
+        if ($Response.Headers.TryGetValues($HeaderName, [ref]$values)) { return [string](@($values)[0]) }
+        if ($Response.Content -and $Response.Content.Headers.TryGetValues($HeaderName, [ref]$values)) { return [string](@($values)[0]) }
+        return ''
+    }
+    $unquote = {
+        param([string]$Value)
+        $v = $Value.Trim()
+        if ($v.Length -ge 2 -and $v.StartsWith('"') -and $v.EndsWith('"')) { $v = $v.Substring(1, $v.Length - 2) }
+        return $v
+    }
+
+    # Windows needs FileShare.Delete to rename the file while it is held open.
+    $share = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { [System.IO.FileShare]::Delete } else { [System.IO.FileShare]::None }
+    $stage = Join-Path $Directory "$Name.part"
+    try {
+        $fs = [System.IO.FileStream]::new($stage, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, $share)
+    }
+    catch {
+        $stage = Join-Path $Directory "$Name.part.$(Get-Random)"
+        $fs = [System.IO.FileStream]::new($stage, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite, $share)
+    }
+    $fs.SetLength(0)
 
     while ($true) {
         $attempt++
-        if ($attempt -gt $hardCap) { return $false }
+        if ($attempt -gt $hardCap) { break }
 
-        $offset = 0
-        if (Test-Path -LiteralPath $OutFile) { $offset = (Get-Item -LiteralPath $OutFile).Length }
+        $offset = $fs.Length
 
-        $client = $null; $resp = $null; $stream = $null; $fs = $null
+        $client = $null; $resp = $null; $stream = $null
         try {
             $client = [System.Net.Http.HttpClient]::new()
             $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
             $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
             if ($offset -gt 0) {
                 $req.Headers.Range = [System.Net.Http.Headers.RangeHeaderValue]::new($offset, $null)
+                if ($etag -and -not $etag.StartsWith('W/')) {
+                    [void]$req.Headers.TryAddWithoutValidation('If-Range', '"' + $etag + '"')
+                }
                 Write-Host "Resuming $leaf from $offset bytes (attempt $attempt)"
             }
 
@@ -540,14 +753,41 @@ function Invoke-ResumableDownload {
             $code = [int]$resp.StatusCode
             if ($code -eq 401 -or $code -eq 403) {
                 Write-Host "${leaf}: access denied (HTTP $code) - the download URL may have expired; re-run to refresh URLs"
-                return $false
+                break
             }
-            if ($code -eq 416) { return $true }  # range past EOF => already complete
+            if ($code -eq 416) {
+                # Range past EOF => already complete, when a strong ETag ties those bytes to this object
+                if ($etag -and -not $etag.StartsWith('W/')) { $success = $true; break }
+                $restarts++
+                Write-Host "${leaf}: cannot resume (HTTP $code) - restarting from scratch"
+                if ($restarts -gt $MaxRestarts) { break }
+                $fs.SetLength(0)
+                continue
+            }
             if ($code -ne 200 -and $code -ne 206) { throw "HTTP $code" }
 
-            $append = ($code -eq 206 -and $offset -gt 0)
-            $fsMode = if ($append) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
-            $fs = [System.IO.FileStream]::new($OutFile, $fsMode, [System.IO.FileAccess]::Write)
+            # A 200 to a resume, or a 206 for a different object, means the partial bytes cannot be kept.
+            $respETag = & $unquote (& $getHeader $resp 'ETag')
+            $changed = ($code -eq 206 -and $etag -and $respETag -and $respETag -ne $etag)
+            if ($offset -gt 0 -and ($code -eq 200 -or $changed)) {
+                $restarts++
+                Write-Host "${leaf}: cannot resume (HTTP $code) - restarting from scratch"
+                if ($restarts -gt $MaxRestarts) { break }
+                $noProgress = 0
+                if ($changed) {
+                    $etag = ''
+                    $fs.SetLength(0)
+                    continue
+                }
+            }
+            if ($code -eq 200) {
+                $etag = $respETag
+                $lastModified = & $getHeader $resp 'Last-Modified'
+                $fs.SetLength(0)
+                $offset = 0
+            }
+            [void]$fs.Seek(0, [System.IO.SeekOrigin]::End)
+
             $stream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
 
             # Per-read stall guard (120s): abort a transfer that stops delivering
@@ -568,28 +808,52 @@ function Invoke-ResumableDownload {
                 if ($read -le 0) { break }
                 $fs.Write($buffer, 0, $read)
             }
-            $fs.Dispose(); $stream.Dispose(); $resp.Dispose(); $client.Dispose()
-            return $true  # read through to EOF => complete
+            $fs.Flush()
+            $success = $true  # read through to EOF => complete
+            break
         }
         catch {
-            if ($fs) { $fs.Dispose() }
-            if ($stream) { $stream.Dispose() }
-            if ($resp) { $resp.Dispose() }
-            if ($client) { $client.Dispose() }
-
-            $cur = 0
-            if (Test-Path -LiteralPath $OutFile) { $cur = (Get-Item -LiteralPath $OutFile).Length }
+            $cur = $fs.Length
             if ($cur -gt $offset) {
                 $noProgress = 0
                 Write-Host "${leaf}: transfer interrupted at $cur bytes - resuming ($_)"
             }
             else {
+                $cause = $_.Exception.GetBaseException()
+                Write-Verbose "${leaf}: attempt $attempt failed: [$($cause.GetType().FullName)] $($cause.Message)"
                 $noProgress++
-                if ($noProgress -ge $maxNoProgress) { return $false }
+                if ($noProgress -ge $maxNoProgress) { break }
                 Start-Sleep -Seconds 5
             }
         }
+        finally {
+            if ($stream) { $stream.Dispose() }
+            if ($resp) { $resp.Dispose() }
+            if ($client) { $client.Dispose() }
+        }
     }
+
+    if ($success) {
+        return @{ Stream = $fs; Path = $stage; ETag = $etag; LastModified = $lastModified; Size = $fs.Length }
+    }
+    $fs.Dispose()
+    Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
+    return $null
+}
+
+# Move a successful download's staging file onto $TargetFile and release it.
+function Complete-StagedDownload {
+    param([hashtable]$Download, [string]$TargetFile)
+    Move-Item -LiteralPath $Download.Path -Destination $TargetFile -Force
+    $Download.Stream.Dispose()
+}
+
+# Release a download's staging file and remove it.
+function Remove-StagedDownload {
+    param([hashtable]$Download)
+    if (-not $Download) { return }
+    $Download.Stream.Dispose()
+    Remove-Item -LiteralPath $Download.Path -Force -ErrorAction SilentlyContinue
 }
 
 # Download database with progress
@@ -606,8 +870,8 @@ function Start-DatabaseDownloadWithProgress {
         [int]$Total
     )
     
-    $targetFile = Join-Path $TargetDirectory $DatabaseName
-    $tempFile = Join-Path $script:TempDirectory $DatabaseName
+    $targetFile = Join-Path $script:TargetPath $DatabaseName
+    $download = $null
     
     # Show progress bar
     $percentComplete = [int](($Index / $Total) * 100)
@@ -619,32 +883,29 @@ function Start-DatabaseDownloadWithProgress {
     try {
         # Resumable download: continues a partial transfer instead of restarting
         # from byte 0, so large databases complete on flaky links.
-        if (-not (Invoke-ResumableDownload -Url $Url -OutFile $tempFile -TimeoutSec $Timeout)) {
+        $download = Invoke-ResumableDownload -Url $Url -Directory $script:TargetPath -Name $DatabaseName -TimeoutSec $Timeout -MaxRestarts $MaxRetries
+        if (-not $download) {
             throw "Download failed (could not complete after retries)"
         }
 
         # Validate downloaded file
-        if ((Test-Path -Path $tempFile) -and (Get-Item -Path $tempFile).Length -gt 0) {
-            $fileSize = (Get-Item -Path $tempFile).Length
+        if ($download.Size -gt 0) {
+            $fileSize = $download.Size
             
             # Basic validation
             if ($DatabaseName -like "*.mmdb") {
                 # Check for MaxMind metadata marker at the end of the file
                 # MMDB files have metadata at the end with marker \xab\xcd\xef followed by MaxMind.com
                 try {
-                    # PowerShell 5.1 and PowerShell Core compatible approach
-                    $fileInfo = Get-Item -Path $tempFile
-                    $fileSize = $fileInfo.Length
                     $readSize = [Math]::Min($fileSize, 100000)  # Read last 100KB
                     
-                    # Open file and seek to the position to start reading
-                    $fileStream = [System.IO.File]::OpenRead($tempFile)
+                    # Seek the staging stream to the position to start reading
+                    $fileStream = $download.Stream
                     $fileStream.Seek($fileSize - $readSize, [System.IO.SeekOrigin]::Begin) | Out-Null
                     
                     # Read the last portion of the file
                     $buffer = New-Object byte[] $readSize
                     $bytesRead = $fileStream.Read($buffer, 0, $readSize)
-                    $fileStream.Close()
                     
                     # Look for the MMDB metadata marker: \xab\xcd\xef followed by MaxMind.com
                     $marker = [byte[]]@(0xab, 0xcd, 0xef) + [System.Text.Encoding]::ASCII.GetBytes("MaxMind.com")
@@ -679,12 +940,14 @@ function Start-DatabaseDownloadWithProgress {
             }
             
             # Move to target location
-            Move-Item -Path $tempFile -Destination $targetFile -Force
+            Complete-StagedDownload -Download $download -TargetFile $targetFile
             
             return @{
                 Success = $true
                 Database = $DatabaseName
                 Size = $fileSize
+                ETag = $download.ETag
+                LastModified = $download.LastModified
             }
         }
         else {
@@ -692,6 +955,7 @@ function Start-DatabaseDownloadWithProgress {
         }
     }
     catch {
+        Remove-StagedDownload -Download $download
         return @{
             Success = $false
             Database = $DatabaseName
@@ -710,32 +974,42 @@ function Start-DatabaseDownload {
         [string]$Url
     )
     
-    $targetFile = Join-Path $TargetDirectory $DatabaseName
-    $tempFile = Join-Path $script:TempDirectory $DatabaseName
+    $targetFile = Join-Path $script:TargetPath $DatabaseName
     
-    # Pass the resumable downloader's definition into the job's runspace.
-    $resumableFn = ${function:Invoke-ResumableDownload}.ToString()
+    # Pass the downloader's definitions into the job's runspace.
+    $functions = @{}
+    foreach ($name in 'Invoke-ResumableDownload', 'Complete-StagedDownload', 'Remove-StagedDownload') {
+        $functions[$name] = (Get-Command -Name $name -CommandType Function).ScriptBlock.ToString()
+    }
 
     $job = Start-Job -ScriptBlock {
-        param($DatabaseName, $Url, $TempFile, $TargetFile, $Timeout, $ResumableFn)
+        param($DatabaseName, $Url, $Directory, $TargetFile, $Timeout, $MaxRetries, $Functions)
 
-        # Re-create the resumable downloader inside this job's runspace.
-        ${function:Invoke-ResumableDownload} = [scriptblock]::Create($ResumableFn)
+        Add-Type -AssemblyName System.Net.Http
 
+        # Re-create the downloader inside this job's runspace.
+        foreach ($name in $Functions.Keys) {
+            Set-Item -Path "function:$name" -Value ([scriptblock]::Create($Functions[$name]))
+        }
+
+        $download = $null
         try {
             # Resumable download: continues a partial transfer instead of
             # restarting from byte 0, so large databases complete on flaky links.
-            if (-not (Invoke-ResumableDownload -Url $Url -OutFile $TempFile -TimeoutSec $Timeout)) {
+            $download = Invoke-ResumableDownload -Url $Url -Directory $Directory -Name $DatabaseName -TimeoutSec $Timeout -MaxRestarts $MaxRetries
+            if (-not $download) {
                 throw "Download failed (could not complete after retries)"
             }
 
             # Verify and move file
-            if ((Test-Path -Path $TempFile) -and (Get-Item -Path $TempFile).Length -gt 0) {
-                Move-Item -Path $TempFile -Destination $TargetFile -Force
+            if ($download.Size -gt 0) {
+                Complete-StagedDownload -Download $download -TargetFile $TargetFile
                 return @{
                     Success = $true
                     Database = $DatabaseName
-                    Size = (Get-Item -Path $TargetFile).Length
+                    Size = $download.Size
+                    ETag = $download.ETag
+                    LastModified = $download.LastModified
                 }
             }
             else {
@@ -743,15 +1017,23 @@ function Start-DatabaseDownload {
             }
         }
         catch {
+            Remove-StagedDownload -Download $download
             return @{
                 Success = $false
                 Database = $DatabaseName
                 Error = $_.ToString()
             }
         }
-    } -ArgumentList $DatabaseName, $Url, $tempFile, $targetFile, $Timeout, $resumableFn
+    } -ArgumentList $DatabaseName, $Url, $script:TargetPath, $targetFile, $Timeout, $MaxRetries, $functions
     
     return $job
+}
+
+function Add-ManifestUpdate {
+    param([hashtable]$Result)
+    if ($OnlyChanged) {
+        $script:ManifestUpdates[$Result.Database] = @{ etag = [string]$Result.ETag; last_modified = [string]$Result.LastModified; size = [long]$Result.Size }
+    }
 }
 
 # Main update function
@@ -759,13 +1041,11 @@ function Update-Databases {
     Write-LogMessage -Level INFO -Message "Starting GeoIP database update"
     Write-LogMessage -Level INFO -Message "Target directory: $TargetDirectory"
     
-    # Create temporary directory
-    try {
-        New-Item -ItemType Directory -Path $script:TempDirectory -Force | Out-Null
-        Write-LogMessage -Level INFO -Message "Temporary directory: $script:TempDirectory"
-    }
-    catch {
-        Exit-WithError -Message "Failed to create temporary directory: $_"
+    $script:TargetPath = (Resolve-Path -LiteralPath $TargetDirectory).ProviderPath
+    
+    if ($OnlyChanged) {
+        $script:Manifest = Read-Manifest -Dir $script:TargetPath
+        $script:ManifestUpdates = New-OrdinalTable
     }
     
     # Prepare API request
@@ -796,7 +1076,7 @@ function Update-Databases {
     }
     
     # Count total databases
-    $totalCount = [int]($urls.PSObject.Properties.Count)
+    $totalCount = @($urls.PSObject.Properties).Count
     Write-LogMessage -Level INFO -Message "Received URLs for $totalCount databases"
     
     # Check if we should use progress bars (when not in quiet mode and reasonable number of databases)
@@ -813,12 +1093,19 @@ function Update-Databases {
             $dbName = $property.Name
             $url = $property.Value
             
+            if ($OnlyChanged -and -not $Force -and (Test-Unchanged -DatabaseName $dbName -Url $url)) {
+                Write-LogMessage -Level SUCCESS -Message "Unchanged: $dbName"
+                $completedCount++
+                continue
+            }
+            
             Write-LogMessage -Level INFO -Message "Downloading: $dbName ($index of $totalCount)"
             
             $result = Start-DatabaseDownloadWithProgress -DatabaseName $dbName -Url $url -Index $index -Total $totalCount
             
             if ($result.Success) {
                 Write-LogMessage -Level SUCCESS -Message "Successfully downloaded: $($result.Database) ($('{0:N0}' -f $result.Size) bytes)"
+                Add-ManifestUpdate -Result $result
                 $completedCount++
             }
             else {
@@ -833,7 +1120,7 @@ function Update-Databases {
     else {
         # Parallel downloads without progress bars. Default 2 (was 4):
         # bandwidth-bound downloads finish large files sooner with fewer streams.
-        $maxParallel = 2
+        $maxParallel = $script:MaxParallel
         $jobs = @()
         $completedCount = 0
         $failedCount = 0
@@ -841,6 +1128,12 @@ function Update-Databases {
         foreach ($property in $urls.PSObject.Properties) {
             $dbName = $property.Name
             $url = $property.Value
+            
+            if ($OnlyChanged -and -not $Force -and (Test-Unchanged -DatabaseName $dbName -Url $url)) {
+                Write-LogMessage -Level SUCCESS -Message "Unchanged: $dbName"
+                $completedCount++
+                continue
+            }
             
             Write-LogMessage -Level INFO -Message "Starting download: $dbName"
             
@@ -857,6 +1150,7 @@ function Update-Databases {
                     
                     if ($result.Success) {
                         Write-LogMessage -Level SUCCESS -Message "Successfully downloaded: $($result.Database) ($('{0:N0}' -f $result.Size) bytes)"
+                        Add-ManifestUpdate -Result $result
                         $completedCount++
                     }
                     else {
@@ -883,6 +1177,7 @@ function Update-Databases {
                 
                 if ($result.Success) {
                     Write-LogMessage -Level SUCCESS -Message "Successfully downloaded: $($result.Database) ($($result.Size) bytes)"
+                    Add-ManifestUpdate -Result $result
                     $completedCount++
                 }
                 else {
@@ -890,6 +1185,18 @@ function Update-Databases {
                     $failedCount++
                 }
             }
+        }
+    }
+    
+    if ($OnlyChanged) {
+        $entries = New-OrdinalTable
+        foreach ($name in $script:Manifest.Keys) { $entries[$name] = $script:Manifest[$name] }
+        foreach ($name in $script:ManifestUpdates.Keys) { $entries[$name] = $script:ManifestUpdates[$name] }
+        try {
+            Write-Manifest -Dir $script:TargetPath -Entries $entries
+        }
+        catch {
+            Write-LogMessage -Level ERROR -Message "Failed to write manifest: $_"
         }
     }
     
@@ -1174,10 +1481,8 @@ function Invoke-Cleanup {
     # Remove lock file
     Remove-LockFile
     
-    # Remove temporary directory
-    if (Test-Path -Path $script:TempDirectory) {
-        Write-LogMessage -Level INFO -Message "Removing temporary directory"
-        Remove-Item -Path $script:TempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    if ($script:SharedLock) {
+        $script:SharedLock.Dispose()
     }
     
     if ($script:ExitCode -eq 0) {
@@ -1188,11 +1493,61 @@ function Invoke-Cleanup {
     }
 }
 
+function Get-EnvInteger {
+    param([string]$Name, [int]$Minimum = 0)
+    $raw = [Environment]::GetEnvironmentVariable($Name)
+    try {
+        $value = [System.Management.Automation.LanguagePrimitives]::ConvertTo($raw, [int])
+    }
+    catch {
+        Exit-WithError -Message "Invalid $Name value: $raw"
+    }
+    if ($value -lt $Minimum) {
+        Exit-WithError -Message "Invalid $Name value: $raw"
+    }
+    return $value
+}
+
+# Environment defaults; parameters given on the command line win
+function Split-DatabaseNames {
+    param([string[]]$Names)
+    return @($Names | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+if (-not $PSBoundParameters.ContainsKey('Databases') -and $env:GEOIP_DATABASES) {
+    $fromEnv = Split-DatabaseNames -Names @($env:GEOIP_DATABASES)
+    if ($fromEnv.Count -gt 0) {
+        $Databases = $fromEnv
+    }
+}
+$Databases = Split-DatabaseNames -Names $Databases
+if (-not $PSBoundParameters.ContainsKey('MaxRetries') -and $env:GEOIP_MAX_RETRIES) {
+    $MaxRetries = Get-EnvInteger -Name 'GEOIP_MAX_RETRIES'
+}
+if (-not $PSBoundParameters.ContainsKey('Timeout') -and $env:GEOIP_TIMEOUT) {
+    $Timeout = Get-EnvInteger -Name 'GEOIP_TIMEOUT'
+}
+if ($env:GEOIP_CONCURRENT) {
+    $script:MaxParallel = Get-EnvInteger -Name 'GEOIP_CONCURRENT' -Minimum 1
+}
+if (-not $PSBoundParameters.ContainsKey('OnlyChanged') -and @('true', '1', 'yes') -ccontains "$env:GEOIP_ONLY_CHANGED") {
+    $OnlyChanged = $true
+}
+if (-not $PSBoundParameters.ContainsKey('LockFile') -and $env:GEOIP_LOCK_FILE) {
+    $LockFile = $env:GEOIP_LOCK_FILE
+}
+if (-not $PSBoundParameters.ContainsKey('LockTimeout') -and $env:GEOIP_LOCK_TIMEOUT) {
+    $LockTimeout = Get-EnvInteger -Name 'GEOIP_LOCK_TIMEOUT'
+}
+if ($LockFile -and $NoLock) {
+    Exit-WithError -Message '--lock-file and --no-lock cannot be combined' -ExitCode 1
+}
+
 # Register cleanup on exit
 $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
     # Note: This handler may not execute in all scenarios
-    if (Test-Path -Path $script:LockFile) {
-        Remove-Item -Path $script:LockFile -Force -ErrorAction SilentlyContinue
+    if (Test-Path -Path $script:PidLockFile) {
+        Remove-Item -Path $script:PidLockFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -1226,7 +1581,19 @@ try {
     }
     
     # Acquire lock
-    New-LockFile
+    if ($LockFile) {
+        try {
+            $lockPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LockFile)
+            $script:SharedLock = Enter-SharedLock -Path $lockPath -DisplayPath $LockFile -Timeout $LockTimeout
+            Write-LogMessage -Level INFO -Message "Acquired lock: $LockFile"
+        }
+        catch {
+            Exit-WithError -Message "$($_.Exception.Message)"
+        }
+    }
+    else {
+        New-LockFile
+    }
     
     # Update databases
     Update-Databases

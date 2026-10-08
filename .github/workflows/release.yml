@@ -25,8 +25,12 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   # Step 1: Setup and version determination
   setup:
+    needs: tests
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}

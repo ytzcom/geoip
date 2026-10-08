@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,7 +57,6 @@ func TestDownloadDatabaseResume(t *testing.T) {
 		config:     cfg,
 		httpClient: newHTTPClient(cfg.Timeout, cfg.MaxRetries, logger),
 		logger:     logger,
-		tempDir:    t.TempDir(),
 	}
 
 	res := g.downloadDatabase(context.Background(), "test.bin", srv.URL)
@@ -77,4 +77,95 @@ func TestDownloadDatabaseResume(t *testing.T) {
 		t.Fatalf("expected >=2 requests (interrupt + resume), got %d", n)
 	}
 	t.Logf("resumed and completed: %d bytes across %d requests", len(got), atomic.LoadInt32(&reqs))
+}
+
+func TestInstallAfterStageReplacedKeepsOwnData(t *testing.T) {
+	dir := t.TempDir()
+	stage := filepath.Join(dir, "x.bin.part")
+	target := filepath.Join(dir, "x.bin")
+	out, err := os.OpenFile(stage, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.WriteString("complete")
+	if err := os.Remove(stage); err != nil {
+		out.Close()
+		t.Skipf("an open stage cannot be replaced here: %v", err)
+	}
+	os.WriteFile(stage, []byte("par"), 0o644)
+
+	g := &GeoIPUpdater{logger: &Logger{quiet: true}}
+	if err := g.install(out, stage, target); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "complete" {
+		t.Fatalf("target = %q", got)
+	}
+	if got, _ := os.ReadFile(stage); string(got) != "par" {
+		t.Fatalf("other run's stage = %q", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Fatalf("leftovers: %v", entries)
+	}
+}
+
+func TestOpenStageFallsBackToPrivateFileWhenPartIsHeld(t *testing.T) {
+	cases := []struct {
+		removeErr error
+		private   bool
+	}{
+		{nil, false},
+		{os.ErrNotExist, false},
+		{&os.PathError{Op: "remove", Path: "x", Err: os.ErrPermission}, true},
+	}
+	for _, c := range cases {
+		dir := t.TempDir()
+		f, err := openStage(dir, "x.bin", func(string) error { return c.removeErr })
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		shared := f.Name() == filepath.Join(dir, "x.bin.part")
+		if shared == c.private {
+			t.Errorf("remove error %v: stage %s", c.removeErr, f.Name())
+		}
+		if c.private && !strings.HasPrefix(filepath.Base(f.Name()), "x.bin.part.") {
+			t.Errorf("private stage %s", f.Name())
+		}
+	}
+}
+
+func TestRangeNotSatisfiableWithoutETagRestarts(t *testing.T) {
+	full := bytes.Repeat([]byte("abcdefgh"), 64*1024)
+	var reqs int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&reqs, 1)
+		if r.Header.Get("Range") != "" {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(full)))
+		w.WriteHeader(http.StatusOK)
+		if n == 1 {
+			w.Write(full[:1024])
+			return
+		}
+		w.Write(full)
+	}))
+	defer srv.Close()
+
+	logger := &Logger{quiet: true}
+	cfg := &Config{TargetDir: t.TempDir(), Timeout: 60 * time.Second, MaxRetries: 3}
+	g := &GeoIPUpdater{config: cfg, httpClient: newHTTPClient(cfg.Timeout, cfg.MaxRetries, logger), logger: logger}
+
+	if res := g.downloadDatabase(context.Background(), "x.bin", srv.URL); res.Error != nil {
+		t.Fatal(res.Error)
+	}
+	if got, _ := os.ReadFile(filepath.Join(cfg.TargetDir, "x.bin")); !bytes.Equal(got, full) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(full))
+	}
+	if n := atomic.LoadInt32(&reqs); n != 3 {
+		t.Fatalf("requests = %d, want 3", n)
+	}
 }

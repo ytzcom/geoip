@@ -28,6 +28,14 @@ Environment Variables:
     GEOIP_API_KEY       API key for authentication
     GEOIP_API_ENDPOINT  API endpoint URL (default: https://geoipdb.net/auth)
     GEOIP_TARGET_DIR    Default target directory
+    GEOIP_DATABASES     Comma-separated database names
+    GEOIP_CONCURRENT    Max concurrent downloads
+    GEOIP_LOG_FILE      Log file path
+    GEOIP_TIMEOUT       Overall download ceiling in seconds
+    GEOIP_MAX_RETRIES   Max retries
+    GEOIP_ONLY_CHANGED  Download only changed databases (true, 1, yes)
+    GEOIP_LOCK_FILE     Lock file path (shared-path lock)
+    GEOIP_LOCK_TIMEOUT  Lock wait limit in seconds (default: 1800)
 """
 
 import asyncio
@@ -39,11 +47,11 @@ import os
 import sys
 import tempfile
 import time
-import shutil
 import signal
+import socket
 import hashlib
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
@@ -91,6 +99,8 @@ DEFAULT_RETRIES = 3
 DEFAULT_TIMEOUT = 1800  # overall ceiling; per-read stall timeout is the real guard
 DEFAULT_MAX_CONCURRENT = 2  # bandwidth-bound: fewer streams finish large files sooner
 LOCK_FILE = Path(tempfile.gettempdir()) / "geoip-update.lock"
+DEFAULT_LOCK_TIMEOUT = 1800
+MANIFEST_NAME = ".geoip-update.json"
 
 # Available databases for validation
 AVAILABLE_DATABASES = {
@@ -123,6 +133,97 @@ class Config:
     no_lock: bool = False
     verify_ssl: bool = True
     user_agent: str = "GeoIP-Update-Python/1.0"
+    only_changed: bool = False
+    force: bool = False
+    lock_file: Optional[Path] = None
+    lock_timeout: int = DEFAULT_LOCK_TIMEOUT
+
+
+def load_manifest(target: Path) -> dict:
+    path = target / MANIFEST_NAME
+    try:
+        files = json.loads(path.read_text(encoding="utf-8"))["files"]
+        return {n: {"etag": str(e["etag"]), "last_modified": str(e["last_modified"]), "size": int(e["size"])} for n, e in files.items()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+def _safe(value: str) -> bool:
+    return not any(c in value for c in '"\\|') and all(32 <= ord(c) != 127 for c in value)
+
+
+def write_manifest(target: Path, entries: dict) -> None:
+    rows = [(n, e) for n, e in sorted(entries.items()) if _safe(n) and _safe(e["etag"]) and _safe(e["last_modified"])]
+    lines = ["{", '  "version": 1,', '  "files": {']
+    for i, (name, e) in enumerate(rows):
+        comma = "," if i < len(rows) - 1 else ""
+        lines.append(f'    "{name}": {{"etag": "{e["etag"]}", "last_modified": "{e["last_modified"]}", "size": {e["size"]}}}{comma}')
+    lines += ["  }", "}"]
+    part = target / (MANIFEST_NAME + ".part")
+    try:
+        part.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+        os.replace(part, target / MANIFEST_NAME)
+    except OSError:
+        if part.exists():
+            part.unlink()
+        raise
+
+
+async def precheck(session: aiohttp.ClientSession, url: str, etag: Optional[str] = None) -> Tuple[int, str, str, Optional[int]]:
+    headers = {'Range': 'bytes=0-0'}
+    if etag:
+        headers['If-None-Match'] = f'"{etag}"'
+    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as response:
+        total = response.headers.get('Content-Range', '').rpartition('/')[2]
+        return (
+            response.status,
+            response.headers.get('ETag', '').strip().strip('"'),
+            response.headers.get('Last-Modified', ''),
+            int(total) if total.isdigit() else None,
+        )
+
+
+class SharedLock:
+    """Exclusive kernel lock on a shared path, released by the OS when the process exits."""
+
+    def __init__(self, path: Path, timeout: int):
+        self.path, self.timeout, self.handle = path, timeout, None
+
+    def __enter__(self):
+        waited = 0
+        while True:
+            try:
+                self.handle = open(self.path, "a+")
+            except OSError as e:
+                busy = getattr(e, "winerror", None) in (32, 33) or (msvcrt and isinstance(e, PermissionError) and self.path.exists())
+                if not busy:
+                    logger.error(f"Cannot open lock file {self.path}: {e}")
+                    sys.exit(1)
+            else:
+                try:
+                    if msvcrt:
+                        self.handle.seek(0)
+                        msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    self.handle.close()
+                    self.handle = None
+            if waited >= self.timeout:
+                logger.error(f"Timed out after {self.timeout} s waiting for lock {self.path}")
+                sys.exit(1)
+            time.sleep(1)
+            waited += 1
+        self.handle.seek(0)
+        self.handle.truncate()
+        self.handle.write(f"pid={os.getpid()} host={socket.gethostname()} started={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
+        self.handle.flush()
+        return self
+
+    def __exit__(self, *exc):
+        if self.handle:
+            self.handle.close()
 
 
 class LockFile:
@@ -248,9 +349,11 @@ class GeoIPUpdater:
     def __init__(self, config: Config):
         self.config = config
         self.session: Optional[aiohttp.ClientSession] = None
-        self.temp_dir: Optional[Path] = None
         self.downloaded_files: Set[str] = set()
+        self.unchanged_files: Set[str] = set()
         self.failed_files: Set[str] = set()
+        self.manifest: dict = {}
+        self.manifest_updates: dict = {}
         
         # Clean and normalize the API endpoint
         self._normalize_endpoint()
@@ -290,24 +393,12 @@ class GeoIPUpdater:
             headers={'User-Agent': self.config.user_agent}
         )
         
-        # Create temporary directory
-        self.temp_dir = Path(tempfile.mkdtemp(prefix="geoip-update-"))
-        logger.debug(f"Created temporary directory: {self.temp_dir}")
-        
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         if self.session:
             await self.session.close()
-        
-        # Cleanup temporary directory
-        if self.temp_dir and self.temp_dir.exists():
-            try:
-                shutil.rmtree(self.temp_dir)
-                logger.debug("Removed temporary directory")
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary directory: {e}")
     
     async def authenticate(self) -> Dict[str, str]:
         """Authenticate with the API and get download URLs.
@@ -456,8 +547,21 @@ class GeoIPUpdater:
         no-progress attempts. The session's sock_read timeout aborts a stalled
         read so this loop can resume it.
         """
-        temp_file = self.temp_dir / name
+        temp_file = self.config.target_dir / f"{name}.part"
         target_file = self.config.target_dir / name
+
+        if self.config.only_changed and not self.config.force and target_file.exists():
+            entry = self.manifest.get(name)
+            if entry and target_file.stat().st_size == entry['size']:
+                try:
+                    status = (await precheck(self.session, url, entry['etag']))[0]
+                except Exception as e:
+                    logger.debug(f"{name}: change check failed: {e}")
+                    status = None
+                if status == 304:
+                    logger.info(f"Unchanged: {name}")
+                    self.unchanged_files.add(name)
+                    return True
 
         logger.info(f"Downloading: {name}")
         if temp_file.exists():
@@ -466,8 +570,11 @@ class GeoIPUpdater:
         max_no_progress = 3
         hard_cap = 50
         no_progress = 0
+        restarts = 0
         attempt = 0
         success = False
+        etag = ""
+        last_modified = ""
 
         while True:
             attempt += 1
@@ -479,6 +586,8 @@ class GeoIPUpdater:
             headers = {}
             if offset > 0:
                 headers['Range'] = f'bytes={offset}-'
+                if etag:
+                    headers['If-Range'] = f'"{etag}"'
                 logger.info(f"Resuming {name} from {offset:,} bytes (attempt {attempt})")
 
             try:
@@ -487,12 +596,29 @@ class GeoIPUpdater:
                     if status in (401, 403):
                         logger.error(f"{name}: access denied (HTTP {status}) - the download URL "
                                      f"may have expired; re-run to refresh URLs")
-                        self.failed_files.add(name)
-                        return False
+                        break
                     if status == 416:
                         # Range not satisfiable -> we already have the whole file
                         success = True
                         break
+                    response_etag = response.headers.get('ETag', '').strip().strip('"')
+                    changed = status == 206 and etag and response_etag and response_etag != etag
+                    if offset > 0 and (status == 200 or changed):
+                        logger.warning(f"{name}: cannot resume (HTTP {status}) - restarting from scratch")
+                        if temp_file.exists():
+                            temp_file.unlink()
+                        offset = 0
+                        no_progress = 0
+                        restarts += 1
+                        if restarts > self.config.max_retries:
+                            logger.error(f"{name}: giving up after {self.config.max_retries} restarts")
+                            break
+                        if changed:
+                            etag = ""
+                            continue
+                    if status == 200:
+                        etag = response_etag
+                        last_modified = response.headers.get('Last-Modified', '')
                     if status == 206:
                         mode = 'ab'  # resuming, append
                     elif status == 200:
@@ -519,22 +645,27 @@ class GeoIPUpdater:
                         break
                     await asyncio.sleep(5)
 
-        if not success:
-            logger.error(f"Failed to download {name}")
-            self.failed_files.add(name)
-            return False
-
-        # Validate and move into place
-        if not self.validate_database_file(temp_file, name):
+        if success and not self.validate_database_file(temp_file, name):
             logger.error(f"Downloaded file failed validation: {name}")
-            self.failed_files.add(name)
-            return False
+        elif success:
+            file_size = temp_file.stat().st_size
+            try:
+                os.replace(temp_file, target_file)
+            except OSError as e:
+                logger.error(f"Failed to move {name} into place: {e}")
+            else:
+                logger.info(f"Successfully downloaded: {name} ({file_size:,} bytes)")
+                self.downloaded_files.add(name)
+                if self.config.only_changed:
+                    self.manifest_updates[name] = {"etag": etag, "last_modified": last_modified, "size": file_size}
+                return True
+        else:
+            logger.error(f"Failed to download {name}")
 
-        file_size = temp_file.stat().st_size
-        shutil.move(str(temp_file), str(target_file))
-        logger.info(f"Successfully downloaded: {name} ({file_size:,} bytes)")
-        self.downloaded_files.add(name)
-        return True
+        if temp_file.exists():
+            temp_file.unlink()
+        self.failed_files.add(name)
+        return False
     
     async def update_databases(self):
         """Main update process."""
@@ -543,6 +674,9 @@ class GeoIPUpdater:
         
         # Ensure target directory exists
         self.config.target_dir.mkdir(parents=True, exist_ok=True)
+        
+        if self.config.only_changed:
+            self.manifest = load_manifest(self.config.target_dir)
         
         # Get download URLs
         try:
@@ -570,9 +704,15 @@ class GeoIPUpdater:
         # Wait for all downloads
         await asyncio.gather(*tasks, return_exceptions=True)
         
+        if self.config.only_changed:
+            try:
+                write_manifest(self.config.target_dir, {**self.manifest, **self.manifest_updates})
+            except OSError as e:
+                logger.error(f"Failed to write manifest: {e}")
+        
         # Summary
         total = len(urls)
-        success = len(self.downloaded_files)
+        success = len(self.downloaded_files) + len(self.unchanged_files)
         failed = len(self.failed_files)
         
         logger.info(f"Download summary: {success} successful, {failed} failed out of {total}")
@@ -914,10 +1054,15 @@ async def check_database_names_command(config: Config):
 @click.option('--show-examples', is_flag=True, help='Show usage examples for database selection')
 @click.option('--check-names', is_flag=True, help='Validate database names with API without downloading')
 @click.option('--validate-only', is_flag=True, help='Validate existing database files')
-@click.version_option(version='1.1.3')
+@click.option('--only-changed', is_flag=True, help='Download only databases that changed since the last run')
+@click.option('--force', is_flag=True, help='Download everything even with --only-changed')
+@click.option('--lock-file', type=click.Path(), help='Lock on a shared path instead of the PID lock')
+@click.option('--lock-timeout', type=int, help='Seconds to wait for --lock-file (default: 1800)')
+@click.version_option(version='1.2.0')
 def main(api_key, endpoint, directory, databases, config, log_file, retries, 
          timeout, concurrent, quiet, verbose, no_lock, no_ssl_verify,
-         list_databases, show_examples, check_names, validate_only):
+         list_databases, show_examples, check_names, validate_only,
+         only_changed, force, lock_file, lock_timeout):
     """Download GeoIP databases from authenticated API."""
     
     # Create default config
@@ -937,12 +1082,33 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
         config_obj.max_concurrent = data.get('max_concurrent', config_obj.max_concurrent)
         config_obj.verify_ssl = data.get('verify_ssl', config_obj.verify_ssl)
         config_obj.user_agent = data.get('user_agent', config_obj.user_agent)
+        config_obj.only_changed = data.get('only_changed', config_obj.only_changed)
+        if data.get('lock_file'):
+            config_obj.lock_file = Path(data['lock_file'])
+        config_obj.lock_timeout = data.get('lock_timeout', config_obj.lock_timeout)
     
     # Override with environment variables
     config_obj.api_key = os.environ.get('GEOIP_API_KEY', config_obj.api_key)
     config_obj.api_endpoint = os.environ.get('GEOIP_API_ENDPOINT', config_obj.api_endpoint)
     if 'GEOIP_TARGET_DIR' in os.environ:
         config_obj.target_dir = Path(os.environ['GEOIP_TARGET_DIR'])
+    env_databases = [d.strip() for d in os.environ.get('GEOIP_DATABASES', '').split(',') if d.strip()]
+    if env_databases:
+        config_obj.databases = env_databases
+    if os.environ.get('GEOIP_LOG_FILE'):
+        config_obj.log_file = Path(os.environ['GEOIP_LOG_FILE'])
+    if os.environ.get('GEOIP_ONLY_CHANGED') in ('true', '1', 'yes'):
+        config_obj.only_changed = True
+    if os.environ.get('GEOIP_LOCK_FILE'):
+        config_obj.lock_file = Path(os.environ['GEOIP_LOCK_FILE'])
+    for env_name, attr, flag_value in (('GEOIP_CONCURRENT', 'max_concurrent', concurrent), ('GEOIP_TIMEOUT', 'timeout', timeout),
+                                       ('GEOIP_MAX_RETRIES', 'max_retries', retries), ('GEOIP_LOCK_TIMEOUT', 'lock_timeout', lock_timeout)):
+        value = os.environ.get(env_name)
+        if value and flag_value is None:
+            try:
+                setattr(config_obj, attr, int(value))
+            except ValueError:
+                raise click.BadParameter(f"{value!r} is not a valid integer.", param_hint=env_name)
     
     # Override with command line arguments
     if api_key:
@@ -961,6 +1127,14 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
         config_obj.timeout = timeout
     if concurrent is not None:
         config_obj.max_concurrent = concurrent
+    if only_changed:
+        config_obj.only_changed = True
+    if force:
+        config_obj.force = True
+    if lock_file:
+        config_obj.lock_file = Path(lock_file)
+    if lock_timeout is not None:
+        config_obj.lock_timeout = lock_timeout
     
     config_obj.quiet = quiet
     config_obj.verbose = verbose
@@ -969,6 +1143,10 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
     
     # Setup logging
     setup_logging(config_obj)
+    
+    if config_obj.lock_file and config_obj.no_lock:
+        logger.error("--lock-file and --no-lock cannot be combined")
+        sys.exit(1)
     
     # Handle special commands that don't require full configuration
     if list_databases:
@@ -1015,8 +1193,13 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
     # Run update
     exit_code = 0
     
+    if config_obj.lock_file:
+        lock = SharedLock(config_obj.lock_file, config_obj.lock_timeout)
+    else:
+        lock = LockFile(LOCK_FILE, config_obj.no_lock)
+    
     try:
-        with LockFile(LOCK_FILE, config_obj.no_lock):
+        with lock:
             # Run async update
             async def run():
                 async with GeoIPUpdater(config_obj) as updater:
