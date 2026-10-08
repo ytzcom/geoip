@@ -87,6 +87,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   failure 2, lock timeout 1), and errors go to stderr and `-LogFile`.
 - CLI (PowerShell): `cmdkey` is called only where it exists, so Linux and macOS
   runs no longer print its warning.
+- CLI (POSIX): a `--config` file whose last line is a key already set by an
+  option or environment variable (e.g. `api_key` with `--api-key`) no longer
+  makes the script exit 1 without output.
+- CLI (PowerShell): `geoip-update.ps1` is saved as UTF-8 with a BOM, so Windows
+  PowerShell 5.1 parses it; read as ANSI, its non-ASCII characters caused parse
+  errors.
 - The `cli/python-cron` and `cli/python-k8s` symlinks to the Python client and
   its `requirements.txt` resolve again.
 - Docs: `cli/python-k8s/README.md` no longer lists `GEOIP_LOG_LEVEL`, which no
