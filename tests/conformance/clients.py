@@ -91,6 +91,11 @@ def run(client, server, target, *, databases=("GeoIP2-City.mmdb", "IP2PROXY-IP-P
     return subprocess.run(cmd, capture_output=True, text=True, env=_env(env), timeout=timeout)
 
 
+def run_powershell_file(server, target, databases):
+    cmd = ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(_PS_SCRIPT), "-ApiKey", server.api_key, "-ApiEndpoint", server.endpoint, "-TargetDirectory", str(target), "-Databases", ",".join(databases)]
+    return subprocess.run(cmd, capture_output=True, text=True, env=_env(None), timeout=120)
+
+
 def start(client, server, target, *, databases=("GeoIP2-City.mmdb", "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"), extra=(), env=None, new_session=False):
     return subprocess.Popen(command(client, server, target, databases, extra), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=_env(env), start_new_session=new_session)
 

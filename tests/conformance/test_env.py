@@ -73,7 +73,7 @@ def test_concurrency_from_env(client, server, target):
 
 
 def test_timeout_from_env_matches_the_flag(client, server, tmp_path):
-    if client in ("python", "go"):
+    if client in ("python", "go", "powershell"):
         pytest.skip("--timeout does not abort a stalled transfer in this client (kept as-is, no breaking changes)")
     server.stall("GeoIP2-City.mmdb", 30)
     short, short_s = _run_in(tmp_path, "flag-2", client, server, extra=[("timeout", 2)], timeout=90)

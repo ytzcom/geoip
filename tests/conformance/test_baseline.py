@@ -13,32 +13,22 @@ EXPECTED_SECOND_RUN = {
 
 PARTIAL_FAILURE_EXIT = {"powershell": 2, "bash": 22}
 
-PS_MULTI_DB_REASON = "ps1 line 799 [int]($urls.PSObject.Properties.Count) throws when /auth returns more than one database; fixed in Task 7"
 
-
-def _xfail_powershell_multi_db(request, client):
-    if client == "powershell":
-        request.applymarker(pytest.mark.xfail(strict=True, reason=PS_MULTI_DB_REASON))
-
-
-def test_default_run_downloads_every_requested_file(request, client, server, target):
-    _xfail_powershell_multi_db(request, client)
+def test_default_run_downloads_every_requested_file(client, server, target):
     result = run(client, server, target)
     assert result.returncode == 0, result.stdout + result.stderr
     for name in DBS:
         assert (target / name).read_bytes() == fixture_bytes(name)
 
 
-def test_default_run_leaves_no_manifest_and_no_part_files(request, client, server, target):
-    _xfail_powershell_multi_db(request, client)
+def test_default_run_leaves_no_manifest_and_no_part_files(client, server, target):
     result = run(client, server, target)
     assert result.returncode == 0, result.stdout + result.stderr
     leftovers = sorted(p.name for p in target.iterdir() if p.name not in DBS)
     assert leftovers == []
 
 
-def test_partial_failure_keeps_successes_with_todays_exit_code(request, client, server, target):
-    _xfail_powershell_multi_db(request, client)
+def test_partial_failure_keeps_successes_with_todays_exit_code(client, server, target):
     server.fail("IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN", 500)
     result = run(client, server, target, extra=[("max_retries", 1)])
     assert result.returncode == PARTIAL_FAILURE_EXIT.get(client, 1), result.stdout + result.stderr
