@@ -105,8 +105,15 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 | `GEOIP_API_ENDPOINT` | `https://geoipdb.net/auth` | API endpoint URL |
 | `GEOIP_TARGET_DIR` | `./geoip` | Database storage directory |
 | `GEOIP_DATABASES` | `all` | Databases to download |
-| `GEOIP_TIMEOUT` | `1800s` | Overall download ceiling (aborts early only on a 120s stall) |
-| `GEOIP_MAX_RETRIES` | `3` | Maximum retry attempts |
+| `GEOIP_TIMEOUT` | `1800s` | `--timeout`: seconds or a duration (`5m`); does not abort a stalled transfer |
+| `GEOIP_MAX_RETRIES` | `3` | `--retries` |
+| `GEOIP_CONCURRENT` | `2` | `--concurrent` |
+| `GEOIP_LOG_FILE` | - | `--log-file` |
+| `GEOIP_ONLY_CHANGED` | - | `--only-changed` when `true`, `1` or `yes` |
+| `GEOIP_LOCK_FILE` | - | `--lock-file` |
+| `GEOIP_LOCK_TIMEOUT` | `1800` | `--lock-timeout` |
+
+`GEOIP_DATABASES` is a comma-separated list. Command-line flags always win over environment variables.
 
 ### Command Line Options
 
@@ -126,7 +133,7 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 
 # Performance
 --timeout VALUE            HTTP timeout: seconds (e.g. 1800) or duration (e.g. 5m, 300s) (default: 30m0s)
---max-retries INT          Maximum retry attempts (default: 3)
+--retries, -r INT          Maximum retry attempts (default: 3)
 --concurrent INT           Max concurrent downloads (default: 4)
 --user-agent STRING        Custom User-Agent header
 
@@ -136,11 +143,39 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 --json                     Output progress in JSON format
 --no-color                 Disable colored output
 
+# Change detection and locking
+--only-changed             Download only databases that changed since the last run
+--force                    Download everything, ignoring --only-changed
+--lock-file PATH           Exclusive lock on a shared path instead of the default lock
+--lock-timeout INT         Seconds to wait for --lock-file (default: 1800)
+
 # Behavior
---force                    Force download even if files are up-to-date
+--no-lock, -n              Don't use the default lock file
 --dry-run                  Show what would be downloaded without downloading
 --version                  Show version information
 ```
+
+## 🔁 Change Detection and Shared-Path Locking
+
+Recommended for daily runs and for a target directory shared between hosts or containers:
+
+```bash
+./geoip-updater --only-changed --lock-file /var/lib/geoip/.geoip-update.lock --directory /var/lib/geoip
+```
+
+| Flag | Environment | Description |
+|------|-------------|-------------|
+| `--only-changed` | `GEOIP_ONLY_CHANGED` (`true`, `1`, `yes`) | Download only databases that changed since the last run |
+| `--force` | — | Download everything, ignoring `--only-changed` |
+| `--lock-file PATH` | `GEOIP_LOCK_FILE` | Exclusive lock on a shared path |
+| `--lock-timeout SECONDS` | `GEOIP_LOCK_TIMEOUT` | Lock wait limit (default `1800`) |
+
+- **Manifest.** `--only-changed` keeps `<target>/.geoip-update.json` with each database's ETag, `Last-Modified` and size, in the same layout every client writes. A database is skipped with `Unchanged: <name>` when the server answers its conditional request (`If-None-Match`) with `304`. It downloads when `--force` is set, the file is missing, the manifest has no entry, or the size on disk differs. The manifest is written once at the end of the run; an unreadable manifest is treated as absent. A run where everything is unchanged exits `0`. Without `--only-changed` no manifest is read or written.
+- **Lock.** `--lock-file PATH` takes an exclusive kernel lock on `PATH` (`flock` on Unix, an exclusive `CreateFile` on Windows) and holds it until the process exits; the operating system releases it on any exit, including `kill -9`. A second run waits up to `--lock-timeout` seconds, then logs `Timed out after N s waiting for lock PATH` and exits `1`. Without `--lock-file` the default lock and `--no-lock` work as before. `--lock-file` (or `GEOIP_LOCK_FILE`) together with `--no-lock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- **Staging.** Downloads go to `<target>/<name>.part` and are renamed into place, so readers never see a partial file. A failed download removes its `.part`. A resumed download sends `If-Range`, so an object that changed mid-download restarts from byte 0.
+- **`--timeout`** does not abort a stalled transfer: a download that stalls and then continues still completes.
+
+Details for every client: [CLI Overview](../README.md#-change-detection-shared-path-locking-and-staging).
 
 ## 📋 Database Selection
 
@@ -310,7 +345,7 @@ echo "$(date): GeoIP databases updated successfully" | logger -t geoip-updater
 - **URL validation**: Ensures valid endpoints
 
 ### Safe Operations
-- **Atomic writes**: Uses temporary files then renames
+- **Atomic writes**: Downloads to `<target>/<name>.part`, then renames into place
 - **Permission preservation**: Maintains file permissions
 - **No shell execution**: Pure Go implementation
 - **Memory safety**: Go's built-in memory management

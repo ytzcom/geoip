@@ -16,6 +16,27 @@ Install Python libraries:
 pip install geoip2 IP2Location IP2Proxy
 ```
 
+## 🔄 Keeping the Databases Current
+
+Download only what changed, under a lock every updater of the directory shares (recommended for daily runs and shared volumes):
+
+```bash
+./cli/geoip-update.sh        --only-changed --lock-file /var/lib/geoip/.geoip-update.lock -d /var/lib/geoip
+./cli/geoip-update-posix.sh  --only-changed --lock-file /var/lib/geoip/.geoip-update.lock --directory /var/lib/geoip
+python cli/python/geoip-update.py --only-changed --lock-file /var/lib/geoip/.geoip-update.lock -d /var/lib/geoip
+./geoip-updater              --only-changed --lock-file /var/lib/geoip/.geoip-update.lock -d /var/lib/geoip
+```
+```powershell
+.\cli\geoip-update.ps1 -OnlyChanged -LockFile C:\GeoIP\.geoip-update.lock -TargetDirectory C:\GeoIP
+```
+
+- `--only-changed` (`-OnlyChanged`, `GEOIP_ONLY_CHANGED=true`) keeps `<target>/.geoip-update.json` and skips a database the server reports unchanged, logging `Unchanged: <name>`. `--force` (`-Force`) downloads everything. Any client can read the manifest another client wrote.
+- `--lock-file PATH` (`-LockFile`, `GEOIP_LOCK_FILE`) takes an exclusive kernel lock that the operating system releases when the run exits, even after `kill -9`. A second run waits up to `--lock-timeout SECONDS` (`-LockTimeout`, `GEOIP_LOCK_TIMEOUT`, default `1800`), then exits `1` with `Timed out after N s waiting for lock PATH`. It cannot be combined with `--no-lock`.
+- Every client downloads to `<target>/<name>.part` and renames it into place, so your application never opens a partial file.
+- Every client also reads `GEOIP_API_KEY`, `GEOIP_API_ENDPOINT`, `GEOIP_TARGET_DIR`, `GEOIP_DATABASES`, `GEOIP_CONCURRENT`, `GEOIP_LOG_FILE`, `GEOIP_TIMEOUT` and `GEOIP_MAX_RETRIES`.
+
+Per-client details, including what `--timeout` does in each client: [cli/README.md](cli/README.md#-change-detection-shared-path-locking-and-staging).
+
 ## Python Examples
 
 ### Python (with geoip2)

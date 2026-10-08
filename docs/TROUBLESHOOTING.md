@@ -141,6 +141,51 @@ tail -f /var/log/geoip-update.log | grep -E "(download|progress|complete)"
    python -c "import geoip2.database; print(geoip2.database.Reader('/data/geoip/GeoIP2-City.mmdb').metadata())"
    ```
 
+## Change Detection and Locking
+
+These apply to `--only-changed`, `--force`, `--lock-file PATH` and `--lock-timeout SECONDS` (PowerShell: `-OnlyChanged`, `-Force`, `-LockFile`, `-LockTimeout`; environment: `GEOIP_ONLY_CHANGED`, `GEOIP_LOCK_FILE`, `GEOIP_LOCK_TIMEOUT`). Every client reads the same environment variables: `GEOIP_API_KEY`, `GEOIP_API_ENDPOINT`, `GEOIP_TARGET_DIR`, `GEOIP_DATABASES`, `GEOIP_CONCURRENT`, `GEOIP_LOG_FILE`, `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`, `GEOIP_ONLY_CHANGED`, `GEOIP_LOCK_FILE` and `GEOIP_LOCK_TIMEOUT`; a command-line option wins over its variable.
+
+### A database is not re-downloaded
+**Symptoms**: `Unchanged: <name>` in the log
+
+The server answered the conditional request (`If-None-Match` with the ETag in `<target>/.geoip-update.json`) with `304`, so the local file matches the remote one. To download everything anyway:
+```bash
+./geoip-update.sh --only-changed --force
+```
+```powershell
+.\geoip-update.ps1 -OnlyChanged -Force
+```
+
+### Every `--only-changed` run downloads everything
+A database downloads when its file is missing, the manifest has no entry for it, or its size on disk differs from the entry. A manifest that cannot be read is treated as absent and rewritten at the end of the run. Check that `<target>/.geoip-update.json` exists after a run and that the target directory is writable. Without `--only-changed` no manifest is read or written.
+
+### `Timed out after N s waiting for lock PATH`
+Another run held the lock for longer than `--lock-timeout` (default `1800`). The lock file holds `pid=<pid> host=<hostname> started=<UTC time>` of the run that last took it:
+```bash
+cat /var/lib/geoip/.geoip-update.lock
+```
+The lock is released by the operating system when its holder exits, including after `kill -9`, so it never needs deleting by hand. The exit code is `1`.
+
+### `--lock-file and --no-lock cannot be combined`
+`--lock-file` or `GEOIP_LOCK_FILE` was set together with `--no-lock` / `-NoLock`. The run exits `1`. Unset one of them.
+
+### Shell clients (Bash, POSIX): lock directory and background downloads
+- Where `flock` is not installed (for example macOS), the lock is the directory `PATH.d`. A directory left by a killed run is broken as stale after the download ceiling (`--timeout`, default `1800`) plus 300 s.
+- If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+
+### `<name>.part` files in the target directory
+Every client downloads into `<target>/<name>.part` and renames it into place when the download completes, so `<name>` is never a partial file. The `.part` exists while that database downloads; a download that finally fails removes it.
+
+### What `--timeout` does
+| Client | `--timeout` / `-Timeout` |
+|--------|--------------------------|
+| Bash, POSIX | Overall download ceiling in seconds across retry attempts (default `1800`); `0` means no ceiling; a value that is not a plain decimal number (for example `1e1`) is passed to curl untouched |
+| Python, Go | Does not abort a stalled transfer |
+| PowerShell | Does not abort a stalled transfer; `-Timeout 0` fails the download |
+
+### PowerShell `-Quiet` exit codes
+`-Quiet` only reduces output. Exit codes match a run without it (`2` when some downloads fail, `1` on a lock timeout); errors go to stderr and to `-LogFile`.
+
 ## Platform-Specific Issues
 
 ### Docker Issues

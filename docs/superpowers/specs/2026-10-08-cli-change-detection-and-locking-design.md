@@ -34,7 +34,7 @@ Verified on 2026-10-08:
   - `GEOIP_CONCURRENT` is read only by POSIX and bash.
   - `GEOIP_LOG_FILE` is read only by bash, Go and PowerShell.
   - Python reads three variables.
-  - `cli/python-cron/README.md` documents `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES` and `GEOIP_LOG_LEVEL`, which nothing reads.
+  - `cli/python-k8s/README.md` documents `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES` and `GEOIP_LOG_LEVEL`, which nothing reads.
 - **There are no tests for six clients,** and no workflow runs any tests. Go has three test files that CI never runs. The release job only runs `--version`, `--help` and `--list-databases` on the Go binaries.
 - **The cron and k8s symlinks are broken in the working tree.** `cli/python-cron/{geoip-update.py,requirements.txt}` and `cli/python-k8s/{geoip-update.py,requirements.txt}` point at `/rsyncd-munged/../python/…`, which does not exist.
 
@@ -50,7 +50,7 @@ Verified on 2026-10-08:
 
 ## Constraints
 
-- **No breaking changes.** These clients run in production projects. With no new option set, every client behaves as it does today. The only exceptions are the two listed under "Consistency fixes", which leave callers' results unchanged.
+- **No breaking changes.** These clients run in production projects. With no new option set, every client behaves as it does today. The exceptions are the two listed under "Consistency fixes", which leave callers' results unchanged, and the existing bugs listed under "Bug fixes".
 - The same behaviour and the same option names in every client.
 - No new runtime dependencies. The POSIX script stays usable under BusyBox `sh` and `dash`.
 - Version `1.2.0`.
@@ -86,7 +86,7 @@ The manifest is `<target>/.geoip-update.json`:
 
 **Format.** Every client writes exactly this canonical layout:
 - keys in the order shown;
-- one file entry per line, with files sorted by name;
+- one file entry per line, with files sorted by name in byte order (the shells sort on the name field only, `LC_ALL=C sort -t'|' -k1,1`, so a name that is a prefix of another sorts first, as in Python `sorted()`, Go `sort.Strings` and PowerShell ordinal order);
 - 2-space indentation;
 - the ETag stored without its surrounding double quotes.
 
@@ -128,6 +128,7 @@ With `--lock-file PATH` set, the client takes an exclusive kernel lock on `PATH`
 - Take the lock with `mkdir "$PATH.d"`, which is atomic, and write a timestamp into it.
 - Remove the directory with a `trap` on `EXIT`, `INT`, `TERM` and `HUP`.
 - A waiter treats `$PATH.d` as stale, removes it and retries once its timestamp is older than the holder's download ceiling (`--timeout`, default 1800 s) plus 300 s. This covers `kill -9`, where no trap runs.
+- In both shell clients (POSIX, bash), background download jobs inherit the lock. If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`). This is documented, not changed.
 - Two test-only environment variables exist and are not documented in user-facing docs. `GEOIP_LOCK_FORCE_FALLBACK=1` selects the fallback on hosts that do have `flock`, so CI can exercise it. `GEOIP_LOCK_STALE_SECONDS` overrides the stale threshold, so a test can prove a killed holder's lock expires without waiting 35 minutes.
 
 **Interaction with the existing lock:**
@@ -147,14 +148,35 @@ With `--lock-file PATH` set, the client takes an exclusive kernel lock on `PATH`
    - `GEOIP_TIMEOUT` (seconds; Go also accepts its duration strings, as for `--timeout`);
    - `GEOIP_MAX_RETRIES`.
 
-   A variable a client did not read before takes effect when it is set. `GEOIP_LOG_LEVEL` is removed from `cli/python-cron/README.md`; no client gains a log-level option.
+   A variable a client did not read before takes effect when it is set. `GEOIP_LOG_LEVEL` is removed from `cli/python-k8s/README.md`; no client gains a log-level option.
 
-PowerShell keeps exit code `2` for partial download failure, and the others keep `1`. The exit codes are not unified, because that would change behaviour callers rely on.
+On a partial download failure PowerShell keeps exit code `2`, bash keeps curl's exit code (for example `22`), and POSIX, Python and Go keep `1`. The exit codes are not unified, because that would change behaviour callers rely on.
+
+### `--timeout` per client
+
+`--timeout` keeps each client's existing meaning; it is documented per client, not unified:
+
+| Client | `--timeout` / `-Timeout` |
+|---|---|
+| POSIX, bash | Overall download ceiling in seconds across all retry attempts (default 1800). `0` means no ceiling. A value that is not a plain decimal number (for example `1e1`) is passed to curl untouched, with no ceiling across attempts. |
+| Python, Go | Does not abort a stalled transfer. |
+| PowerShell | Does not abort a stalled transfer. `-Timeout 0` fails the download. |
+
+### Bug fixes
+
+These existing bugs are fixed and listed under "Fixed" in the `CHANGELOG.md`, because they change behaviour for existing users:
+- POSIX: `/auth` retries run under `dash`; `set -e` inside the command substitution ended them after the first attempt.
+- POSIX, bash: download retries and resume run; `set -e` ended the background download job at the first curl failure. A resumed request carries `If-Range: "<etag>"`, so a changed object returns a full `200` and restarts from byte 0, never a mixed file. A download that finally fails removes `<name>.part`. On a partial failure bash waits for every download before exiting.
+- Python, Go: resumed requests carry `If-Range` in the same way.
+- PowerShell: runs where `/auth` returned more than one database failed with exit 1 (`$urls.PSObject.Properties.Count` converted an array to `Int32`). Multi-database runs work, and a partial failure exits `2`.
+- PowerShell: under `-Quiet`, logging an error threw, so failed runs exited 0. `-Quiet` only reduces output; exit codes match a run without it.
+- PowerShell: `-Databases` accepts one comma-separated value (for `pwsh -File`), and `cmdkey` is called only where it exists.
+- Python, Go: an invalid `GEOIP_*` value is checked only when its flag is not given, so flags win over invalid environment values.
 
 ### Repository fixes
 
 - Restore the four `cli/python-cron` and `cli/python-k8s` symlinks to `../python/geoip-update.py` and `../python/requirements.txt`. `.serena/project.yml` is left untouched.
-- Bump the version from `1.1.3` to `1.2.0` everywhere it is hardcoded:
+- Bump the version to `1.2.0` everywhere it is hardcoded:
   - `cli/python/geoip-update.py`, `cli/setup.py`;
   - `cli/go/main.go`, `cli/go/Makefile`, `docker-scripts/Dockerfile` (two `-X main.version` flags);
   - `cli/geoip-update.ps1`;
@@ -194,9 +216,9 @@ A conformance suite, `tests/conformance/` (pytest), runs every client as a black
 **Cases, per client:**
 1. **Baseline (written first, passing before any change):**
    - a default run downloads every requested file byte-for-byte and exits 0;
-   - partial failure exits with today's code (PowerShell `2`, others `1`) and keeps the successful files;
+   - partial failure exits with today's code (PowerShell `2`, bash curl's code `22`, others `1`) and keeps the successful files;
    - no manifest and no `.part` file are left behind;
-   - today's default lock behaviour holds (POSIX: none; the others: a second concurrent run fails as it does today).
+   - today's default lock behaviour holds (POSIX: none, not pinned because the outcome is a race on `<name>.part`; Go: a second concurrent run succeeds; bash, Python and PowerShell: it fails).
 2. **Change detection:**
    - the first `--only-changed` run downloads everything and writes the canonical manifest;
    - a second run makes one conditional request per file, downloads nothing, and logs `Unchanged`;

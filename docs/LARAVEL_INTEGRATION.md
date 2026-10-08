@@ -53,6 +53,8 @@ GEOIP_API_KEY=
 GEOIP_API_ENDPOINT=https://geoipdb.net/auth
 GEOIP_TARGET_DIR=            # optional; defaults to database_path('geoip')
 GEOIP_DATABASES=all         # or a comma list, e.g. "GeoIP2-Country.mmdb,GeoIP2-City.mmdb"
+GEOIP_ONLY_CHANGED=true     # re-download only databases that changed (see §5)
+GEOIP_LOCK_FILE=            # e.g. /var/www/html/database/geoip/.geoip-update.lock when containers share the volume
 
 # Docker refresh knobs (see §5) — safe defaults shown
 GEOIP_DOWNLOAD_ON_START=true
@@ -202,14 +204,27 @@ volumes:
   - geoip_data:/var/www/html/database/geoip
 ```
 
+**Change detection and locking.** Every bundled client reads `GEOIP_ONLY_CHANGED`, `GEOIP_LOCK_FILE`
+and `GEOIP_LOCK_TIMEOUT` (default `1800` s), the environment form of `--only-changed`,
+`--lock-file PATH` and `--lock-timeout SECONDS` (PowerShell: `-OnlyChanged`, `-LockFile`, `-LockTimeout`).
+With change detection on, the client keeps `<target>/.geoip-update.json` and downloads a database
+only when the server reports it changed (it logs `Unchanged: <name>` otherwise), so a daily run
+transfers almost nothing between the weekly upstream updates. `--force` downloads everything
+regardless. `GEOIP_LOCK_FILE` takes an exclusive kernel lock on a path every container sharing the
+volume can see: a second run waits (up to the lock timeout, then exits `1` with
+`Timed out after N s waiting for lock PATH`), and a killed run never leaves a stale lock. Downloads
+are staged as `<name>.part` in the target directory and renamed into place, so PHP never opens a
+half-written database. The full option and environment list per client is in
+[cli/README.md](../cli/README.md#-change-detection-shared-path-locking-and-staging).
+
 **Non-Docker fallback — artisan + scheduler.** Add a command that shells to the CLI, then schedule it:
 
 ```php
 // app/Console/Commands/UpdateGeoIpDatabases.php  — signature: geoip:update
 $cfg = config('geoip.updater');
 // find /opt/geoip/geoip-update-{amd64,arm64} (or geoip-update-posix.sh), then:
-exec(sprintf("%s --api-key '%s' --directory '%s' --endpoint '%s' 2>&1",
-    $script, $cfg['api_key'], $cfg['target_dir'], $cfg['endpoint']), $out, $code);
+exec(sprintf("%s --api-key '%s' --directory '%s' --endpoint '%s' --only-changed --lock-file '%s/.geoip-update.lock' 2>&1",
+    $script, $cfg['api_key'], $cfg['target_dir'], $cfg['endpoint'], $cfg['target_dir']), $out, $code);
 ```
 
 ```php
@@ -219,7 +234,7 @@ Schedule::command('geoip:update')->weekly()->sundays()->at('03:00');
 
 The updater databases are refreshed weekly upstream (Mondays 00:00 UTC), so refreshing the app more
 than daily buys nothing. You can also just run the bundled CLI directly:
-`./cli/geoip-update.sh -k $GEOIP_API_KEY -d database/geoip` (see [cli/README.md](../cli/README.md)).
+`./cli/geoip-update.sh -k $GEOIP_API_KEY -d database/geoip --only-changed --lock-file database/geoip/.geoip-update.lock` (see [cli/README.md](../cli/README.md)).
 
 ### 6. Use it
 

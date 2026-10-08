@@ -60,7 +60,30 @@ volumes:
 | `GEOIP_TARGET_DIR` | `/data` | Database storage directory |
 | `CRON_SCHEDULE` | `0 2 * * *` | Cron schedule (daily at 2 AM) |
 | `GEOIP_DATABASES` | `all` | Databases to download |
-| `GEOIP_LOG_FILE` | `/logs/geoip-update.log` | Log file path |
+| `GEOIP_LOG_FILE` | `/logs/geoip-update.log` | Log file path (the crontab passes `--log-file /logs/geoip-update.log`, which wins) |
+| `GEOIP_CONCURRENT` | `2` | Max concurrent downloads |
+| `GEOIP_TIMEOUT` | `1800` | Download timeout in seconds |
+| `GEOIP_MAX_RETRIES` | `3` | Maximum retry attempts |
+| `GEOIP_ONLY_CHANGED` | - | Download only changed databases (`true`, `1`, `yes`) |
+| `GEOIP_LOCK_FILE` | - | Exclusive lock on a shared path |
+| `GEOIP_LOCK_TIMEOUT` | `1800` | Seconds to wait for `GEOIP_LOCK_FILE` |
+
+### Change Detection and Shared-Path Locking
+
+The scheduled job runs the [Python CLI](../python/README.md), so set these through the environment. Recommended for daily runs and for a volume shared with other updaters:
+
+```yaml
+    environment:
+      GEOIP_ONLY_CHANGED: "true"
+      GEOIP_LOCK_FILE: /data/.geoip-update.lock
+```
+
+- **Manifest.** With change detection on, the client keeps `<target>/.geoip-update.json` with each database's ETag, `Last-Modified` and size, in the same layout every client writes. A database is skipped with `Unchanged: <name>` when the server answers its conditional request (`If-None-Match`) with `304`. It downloads when the file is missing, the manifest has no entry, or the size on disk differs. The manifest is written once at the end of the run; an unreadable manifest is treated as absent. A run where everything is unchanged exits `0`.
+- **Lock.** A lock file takes an exclusive kernel lock that the operating system releases on any exit, including `kill -9`, so a crashed run never blocks the next one. A second run waits up to the lock timeout (default `1800` s), then logs `Timed out after N s waiting for lock PATH` and exits `1`. Setting `GEOIP_LOCK_FILE` together with `--no-lock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- **Staging.** Downloads go to `<target>/<name>.part` and are renamed into place, so a pod or container reading the volume never sees a partial file. A failed download removes its `.part`.
+- **`GEOIP_TIMEOUT` / `--timeout`** does not abort a stalled transfer.
+
+Details for every client: [CLI Overview](../README.md#-change-detection-shared-path-locking-and-staging).
 
 ### Cron Schedule Examples
 

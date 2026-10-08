@@ -89,6 +89,23 @@ cd geoip/cli
 All CLI tools use the same environment variables and command-line options:
 
 ### Environment Variables
+
+Every client reads these variables as the default for the matching option. A command-line option always wins.
+
+| Variable | Option it defaults |
+|----------|--------------------|
+| `GEOIP_API_KEY` | API key |
+| `GEOIP_API_ENDPOINT` | API endpoint |
+| `GEOIP_TARGET_DIR` | Target directory |
+| `GEOIP_DATABASES` | Database selection (comma-separated) |
+| `GEOIP_CONCURRENT` | Parallel downloads (default `2`; a flag only in Python and Go: `--concurrent`) |
+| `GEOIP_LOG_FILE` | Log file |
+| `GEOIP_TIMEOUT` | `--timeout` / `-Timeout` (seconds; Go also accepts durations such as `5m`) |
+| `GEOIP_MAX_RETRIES` | Retries (`--max-retries` in POSIX, `--retries` in bash/Python/Go, `-MaxRetries` in PowerShell) |
+| `GEOIP_ONLY_CHANGED` | `--only-changed` / `-OnlyChanged` (`true`, `1` or `yes`) |
+| `GEOIP_LOCK_FILE` | `--lock-file` / `-LockFile` |
+| `GEOIP_LOCK_TIMEOUT` | `--lock-timeout` / `-LockTimeout` |
+
 ```bash
 export GEOIP_API_KEY="your-api-key"
 export GEOIP_API_ENDPOINT="https://geoipdb.net/auth"
@@ -109,6 +126,69 @@ export GEOIP_DATABASES="all"  # or "city,country" for specific ones
 | Log File | `-l`, `--log-file` | `-LogFile` | `-l`, `--log-file` | Log to file |
 | **Validate Only** | `-V`, `--validate-only` | `-ValidateOnly` | `--validate-only` | **Validate existing files without downloading** |
 | **Check Names** | `-C`, `--check-names` | `-CheckNames` | `--check-names` | **Validate database names with API** |
+| Only Changed | `--only-changed` | `-OnlyChanged` | `--only-changed` | Download only databases that changed since the last run |
+| Force | `--force` | `-Force` | `--force` | Download everything, ignoring `--only-changed` |
+| Lock File | `--lock-file PATH` | `-LockFile` | `--lock-file PATH` | Exclusive lock on a shared path |
+| Lock Timeout | `--lock-timeout SECONDS` | `-LockTimeout` | `--lock-timeout SECONDS` | Lock wait limit (default `1800`) |
+
+The POSIX script and the Go binary use the same long option names as bash and Python for these four options.
+
+## 🔁 Change Detection, Shared-Path Locking and Staging
+
+Recommended for daily runs and for targets shared between hosts or containers:
+
+```bash
+./geoip-update.sh --only-changed --lock-file /var/lib/geoip/.geoip-update.lock -d /var/lib/geoip
+```
+```powershell
+.\geoip-update.ps1 -OnlyChanged -LockFile C:\GeoIP\.geoip-update.lock -TargetDirectory C:\GeoIP
+```
+
+| Purpose | POSIX / bash / Python / Go | PowerShell | Environment | YAML key (POSIX, Python) |
+|---------|----------------------------|------------|-------------|--------------------------|
+| Download only changed files | `--only-changed` | `-OnlyChanged` | `GEOIP_ONLY_CHANGED` (`true`, `1`, `yes`) | `only_changed` |
+| Ignore change detection | `--force` | `-Force` | — | — |
+| Lock on a shared path | `--lock-file PATH` | `-LockFile` | `GEOIP_LOCK_FILE` | `lock_file` |
+| Lock wait limit | `--lock-timeout SECONDS` (default `1800`) | `-LockTimeout` | `GEOIP_LOCK_TIMEOUT` | `lock_timeout` |
+
+### Change detection (`--only-changed`)
+
+- The manifest `<target>/.geoip-update.json` records each database's ETag, `Last-Modified` and size. Every client writes the same layout, so any client can read a manifest another client wrote.
+- A database downloads when `--force` is set, the file is missing, the manifest has no entry for it, or its size on disk differs from the entry. Otherwise the client sends a conditional request (`If-None-Match`). A `304` logs `Unchanged: <name>` and leaves the file as it is.
+- The manifest is written once, at the end of the run, through `.geoip-update.json.part` and a rename. Entries for databases not requested in the run are kept. A manifest that cannot be read is treated as absent: everything downloads and a new manifest is written.
+- Unchanged files count as successes. A run where every file is unchanged exits `0`.
+- Without `--only-changed` no manifest is read or written.
+- Two `--only-changed` runs without a lock can race on the manifest: the last writer wins, and a lost entry causes one extra download on a later run. Use `--lock-file` with `--only-changed`.
+
+### Shared-path lock (`--lock-file`)
+
+- The client takes an exclusive kernel lock on `PATH` (created if missing) before it reads the manifest or calls the API, and holds it until it exits. The operating system releases the lock when the process exits for any reason, including `kill -9`.
+- A second run waits for the lock, polling, for up to `--lock-timeout` seconds (default `1800`). When that expires it logs `Timed out after N s waiting for lock PATH` and exits `1`.
+- After taking the lock, the client writes `pid=<pid> host=<hostname> started=<UTC time>` into the lock file, for diagnosis only.
+- Without `--lock-file`, bash, Python, Go and PowerShell keep their default lock in the system temp directory (turned off with `--no-lock` / `-NoLock`); the POSIX script takes no lock.
+- `--lock-file` (or `GEOIP_LOCK_FILE`) together with `--no-lock` / `-NoLock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- Shell clients (POSIX, bash):
+  - They use `flock` when the command exists. Where `flock` is missing (for example macOS), they lock by creating the directory `PATH.d`, removed on exit. A lock directory left by a killed run is broken as stale after the download ceiling (`--timeout`, default `1800`) plus 300 s.
+  - If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+
+### Atomic staging
+
+- Every client downloads into `<target>/<name>.part` and renames it to `<target>/<name>`, so a reader sees either the previous complete file or the new complete file, never a partial one. The `.part` file exists only while the download runs.
+- A download that finally fails removes its `.part`.
+- A resumed download sends `If-Range`. If the object changed mid-download, the file restarts from byte 0 (counted as a retry), so a file is never mixed from two versions.
+
+### What `--timeout` does, per client
+
+| Client | `--timeout` / `-Timeout` |
+|--------|--------------------------|
+| POSIX, bash | Overall download ceiling in seconds across all retry attempts (default `1800`). `0` means no ceiling. A value that is not a plain decimal number (for example `1e1`) is passed to curl untouched, with no ceiling across attempts. |
+| Python, Go | Does not abort a stalled transfer: a download that stalls and then continues still completes. Go also accepts durations (`5m`, `300s`). |
+| PowerShell | Does not abort a stalled transfer. `-Timeout 0` fails the download. |
+
+### Exit codes
+
+- When some downloads fail, the run exits `2` in PowerShell, with curl's exit code in bash (for example `22`), and `1` in POSIX, Python and Go. The files that did download are kept.
+- PowerShell `-Quiet` only reduces output; exit codes are the same as without it.
 
 ## 📋 Database Selection
 
@@ -316,6 +396,8 @@ rm /tmp/geoip-update.lock
 # Run without lock (not recommended for automation)
 ./geoip-update.sh --no-lock
 ```
+
+A `--lock-file` lock never needs removing by hand: the operating system releases it when the holder exits. `Timed out after N s waiting for lock PATH` means another run held the lock for longer than `--lock-timeout`.
 
 ### Debug Mode
 

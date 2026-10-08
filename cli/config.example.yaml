@@ -16,9 +16,17 @@ databases:  # List specific databases or use "all"
 
 # Network Configuration
 max_retries: 3
-timeout: 300  # seconds
-max_concurrent: 4  # parallel downloads
+timeout: 1800  # seconds
+max_concurrent: 2  # parallel downloads
 verify_ssl: true
+
+# Change Detection and Locking
+# only_changed: download only databases that changed since the last run
+# lock_file: exclusive lock shared by every run that uses this path
+# lock_timeout: seconds to wait for lock_file
+only_changed: false
+# lock_file: /var/lib/geoip/.geoip-update.lock
+lock_timeout: 1800
 
 # Logging
 # log_file: /var/log/geoip-update.log  # Uncomment to enable file logging
