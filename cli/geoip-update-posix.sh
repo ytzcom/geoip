@@ -325,6 +325,13 @@ load_config() {
 
 # Validate configuration
 validate_config() {
+    case "$TIMEOUT" in ''|.*|*.|*.*.*|*[!0-9.]*) log ERROR "Invalid --timeout/GEOIP_TIMEOUT: '$TIMEOUT' (expected a non-negative number of seconds)"; return 1 ;; esac
+    TIMEOUT_SECONDS=$(printf '%s' "${TIMEOUT%%.*}" | sed 's/^0*//')
+    TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-0}
+    case "$TIMEOUT" in *.*[1-9]*) TIMEOUT_SECONDS=$((TIMEOUT_SECONDS + 1)) ;; esac
+    case "$LOCK_TIMEOUT" in ''|*[!0-9]*) log ERROR "Invalid --lock-timeout/GEOIP_LOCK_TIMEOUT: '$LOCK_TIMEOUT' (expected a non-negative integer)"; return 1 ;; esac
+    case "$MAX_RETRIES" in ''|*[!0-9]*) log ERROR "Invalid --max-retries/GEOIP_MAX_RETRIES: '$MAX_RETRIES' (expected a non-negative integer)"; return 1 ;; esac
+
     if [ -z "$API_KEY" ]; then
         log ERROR "API key is required. Use --api-key or set GEOIP_API_KEY environment variable."
         return 1
@@ -397,7 +404,8 @@ lock_acquire() {
     [ -n "$LOCK_FILE" ] || return 0
     waited=0
     if command -v flock >/dev/null 2>&1 && [ -z "${GEOIP_LOCK_FORCE_FALLBACK:-}" ]; then
-        exec 9>>"$LOCK_FILE" || { log ERROR "Cannot open lock file $LOCK_FILE"; return 1; }
+        ( : >>"$LOCK_FILE" ) 2>/dev/null || { log ERROR "Cannot open lock file $LOCK_FILE"; return 1; }
+        exec 9>>"$LOCK_FILE"
         until flock -n 9; do
             if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
                 log ERROR "Timed out after $LOCK_TIMEOUT s waiting for lock $LOCK_FILE"
@@ -409,10 +417,11 @@ lock_acquire() {
         printf 'pid=%s host=%s started=%s\n' "$$" "$(uname -n)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_FILE"
         return 0
     fi
-    stale="${GEOIP_LOCK_STALE_SECONDS:-$((TIMEOUT + 300))}"
+    stale="${GEOIP_LOCK_STALE_SECONDS:-$((TIMEOUT_SECONDS + 300))}"
     until mkdir "$LOCK_FILE.d" 2>/dev/null; do
         now=$(date +%s)
         held=$(cat "$LOCK_FILE.d/started" 2>/dev/null || echo "$now")
+        case "$held" in ''|*[!0-9]*) held=$now ;; esac
         if [ $((now - held)) -gt "$stale" ]; then
             rm -rf "$LOCK_FILE.d"
             continue
@@ -424,7 +433,7 @@ lock_acquire() {
         sleep 1
         waited=$((waited + 1))
     done
-    date +%s > "$LOCK_FILE.d/started"
+    date +%s > "$LOCK_FILE.d/started.tmp" && mv "$LOCK_FILE.d/started.tmp" "$LOCK_FILE.d/started"
     LOCK_DIR_HELD="$LOCK_FILE.d"
     trap 'lock_release' EXIT
     trap 'lock_release; exit 129' HUP
@@ -460,11 +469,11 @@ manifest_load() {
 }
 
 manifest_get() {
-    printf '%s' "$MANIFEST_ENTRIES" | grep -F "$1|" | grep "^$(printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g')|" | head -n 1
+    printf '%s' "$MANIFEST_ENTRIES" | grep "^$(printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g')|" | head -n 1
 }
 
 manifest_set() {
-    case "$2$3" in *'"'*|*'\'*) return 0 ;; esac
+    case "$1$2$3$4" in *[[:cntrl:]\|\"\\]*) return 0 ;; esac
     MANIFEST_ENTRIES=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v "^$(printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g')|" || true)
     MANIFEST_ENTRIES="${MANIFEST_ENTRIES:+$MANIFEST_ENTRIES
 }$1|$2|$3|$4
@@ -473,7 +482,7 @@ manifest_set() {
 
 manifest_write() {
     m="$TARGET_DIR/.geoip-update.json"
-    entries=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v '^$' | sort || true)
+    entries=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v '^$' | LC_ALL=C sort || true)
     total=$(printf '%s\n' "$entries" | grep -c . || true)
     {
         printf '{\n  "version": 1,\n  "files": {\n'
@@ -486,12 +495,16 @@ manifest_write() {
             printf '    "%s": {"etag": "%s", "last_modified": "%s", "size": %s}%s\n' "$name" "$etag" "$lm" "$size" "$comma"
         done
         printf '  }\n}\n'
-    } > "$m.part" && mv "$m.part" "$m"
+    } > "$m.part" && mv "$m.part" "$m" || {
+        log ERROR "Failed to write manifest $m"
+        rm -f "$m.part"
+        return 1
+    }
 }
 
 # precheck URL [ETAG] -> sets PC_STATUS, PC_ETAG, PC_LM, PC_TOTAL
 precheck() {
-    hdr=$(mktemp)
+    hdr=$(mktemp "${TEMP_DIR:-${TMPDIR:-/tmp}}/precheck.XXXXXX")
     if [ -n "${2:-}" ]; then
         PC_STATUS=$(curl -sS -o /dev/null -D "$hdr" -r 0-0 -H "If-None-Match: \"$2\"" --max-time 60 -w '%{http_code}' "$1" 2>/dev/null || true)
     else
@@ -679,14 +692,14 @@ download_database() {
     # Resume on interruption/stall instead of restarting from byte 0, so large
     # databases complete on flaky links. Retry while progressing; give up only
     # after a few consecutive no-progress attempts or once $TIMEOUT has passed.
-    # Resumed requests carry If-Range, so a changed object restarts from byte 0.
     local max_no_progress=3
     local hard_cap=50
     local no_progress=0
+    local restarts=0
     local attempt=0
     local success=no
     local started etag="" last_modified="" response_etag
-    local prev_size cur_size remaining http_code curl_exit
+    local prev_size cur_size max_time http_code curl_exit
     started=$(date +%s)
 
     while :; do
@@ -696,10 +709,13 @@ download_database() {
             break
         fi
 
-        remaining=$((TIMEOUT - ($(date +%s) - started)))
-        if [ "$remaining" -le 0 ]; then
-            log ERROR "$db_name: giving up after $TIMEOUT s"
-            break
+        max_time="$TIMEOUT"
+        if [ "$TIMEOUT_SECONDS" -gt 0 ] && [ "$attempt" -gt 1 ]; then
+            max_time=$((TIMEOUT_SECONDS - ($(date +%s) - started)))
+            if [ "$max_time" -le 0 ]; then
+                log ERROR "$db_name: giving up after $TIMEOUT s"
+                break
+            fi
         fi
 
         prev_size=0
@@ -717,7 +733,7 @@ download_database() {
         rm -f "$header_file"
         curl_exit=0
         http_code=$(curl --silent --show-error --location --fail \
-            --connect-timeout 30 --max-time "$remaining" \
+            --connect-timeout 30 --max-time "$max_time" \
             --speed-limit 1024 --speed-time 120 \
             "$@" --dump-header "$header_file" \
             --write-out '%{http_code}' --output "$temp_file" "$url") || curl_exit=$?
@@ -734,22 +750,17 @@ download_database() {
             fi
         fi
 
-        # Server ignored the Range request: curl 33 ("Cannot resume"), or a 200
-        # returned while resuming (If-Range failed: the object changed). The
-        # partial can't be continued - discard it and restart from byte 0.
-        if [ "$prev_size" -gt 0 ] && { [ "$curl_exit" -eq 33 ] || [ "$http_code" = "200" ]; }; then
-            log WARNING "$db_name: server did not honor resume (HTTP $http_code, curl exit $curl_exit) - restarting from scratch"
+        # Resume refused (curl 33), or the object changed (If-Range 200, or a 206 with another ETag).
+        if [ "$prev_size" -gt 0 ] && { [ "$curl_exit" -eq 33 ] || [ "$http_code" = "200" ] || { [ "$http_code" = "206" ] && [ -n "$etag" ] && [ -n "$response_etag" ] && [ "$response_etag" != "$etag" ]; }; }; then
+            log WARNING "$db_name: cannot resume (HTTP $http_code, curl exit $curl_exit) - restarting from scratch"
             rm -f "$temp_file"
             etag=""
             no_progress=0
-            continue
-        fi
-
-        if [ "$prev_size" -gt 0 ] && [ "$http_code" = "206" ] && [ -n "$etag" ] && [ -n "$response_etag" ] && [ "$response_etag" != "$etag" ]; then
-            log WARNING "$db_name: changed during download - restarting from scratch"
-            rm -f "$temp_file"
-            etag=""
-            no_progress=0
+            restarts=$((restarts + 1))
+            if [ "$restarts" -gt "$MAX_RETRIES" ]; then
+                log ERROR "$db_name: giving up after $MAX_RETRIES restarts"
+                break
+            fi
             continue
         fi
 
@@ -803,7 +814,7 @@ download_database() {
     }
 
     if [ "$ONLY_CHANGED" = true ]; then
-        echo "$db_name|$etag|$last_modified|$(printf '%s' "$size" | tr -d ' ')" >> "$TEMP_DIR/manifest.updates"
+        printf '%s|%s|%s|%s\n' "$db_name" "$etag" "$last_modified" "$(printf '%s' "$size" | tr -d ' ')" >> "$TEMP_DIR/manifest.updates"
     fi
 
     log SUCCESS "Downloaded: $db_name ($(( size / 1024 / 1024 ))MB)"

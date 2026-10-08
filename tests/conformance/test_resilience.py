@@ -17,10 +17,12 @@ def test_object_change_mid_download_never_yields_a_mixed_file(client, server, ta
     v1 = fixture_bytes(CITY)
     v2 = fixture_bytes(CITY, "v2")
     server.change_during_download(CITY, v2, after_bytes=50_000)
-    run(client, server, target)
+    result = run(client, server, target)
     if (target / CITY).exists():
-        assert (target / CITY).read_bytes() in (v1, v2)
+        assert (target / CITY).read_bytes() in (v1, v2), "mixed file"
     assert sorted(p.name for p in target.iterdir() if p.name.endswith(".part")) == []
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (target / CITY).read_bytes() == v2
 
 
 def test_final_failure_removes_part(client, server, target):

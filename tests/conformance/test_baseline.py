@@ -65,3 +65,29 @@ def test_powershell_single_database_baseline(server, target):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (target / "GeoIP2-City.mmdb").read_bytes() == fixture_bytes("GeoIP2-City.mmdb")
     assert sorted(p.name for p in target.iterdir()) == ["GeoIP2-City.mmdb"]
+
+
+TIMEOUT_OUTCOME = {
+    ("0", "powershell"): 2,
+    ("1.5", "python"): 2,
+    ("1.5", "go"): 2,
+}
+
+
+def _timeout_run(client, server, target, value):
+    databases = ["GeoIP2-City.mmdb"] if client == "powershell" else list(DBS)
+    result = run(client, server, target, databases=databases, extra=[("timeout", value)])
+    expected = TIMEOUT_OUTCOME.get((value, client), 0)
+    assert result.returncode == expected, result.stdout + result.stderr
+    present = sorted(p.name for p in target.iterdir())
+    assert present == (sorted(databases) if expected == 0 else []), present
+    for name in present:
+        assert (target / name).read_bytes() == fixture_bytes(name)
+
+
+def test_timeout_zero_is_unchanged(client, server, target):
+    _timeout_run(client, server, target, "0")
+
+
+def test_decimal_timeout_is_unchanged(client, server, target):
+    _timeout_run(client, server, target, "1.5")
