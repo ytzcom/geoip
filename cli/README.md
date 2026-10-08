@@ -158,6 +158,7 @@ Recommended for daily runs and for targets shared between hosts or containers:
 - The manifest is written once, at the end of the run, through `.geoip-update.json.part` and a rename. Entries for databases not requested in the run are kept. A manifest that cannot be read is treated as absent: everything downloads and a new manifest is written.
 - Unchanged files count as successes. A run where every file is unchanged exits `0`.
 - Without `--only-changed` no manifest is read or written.
+- A weak ETag (`W/"…"`) is not recorded, so a file served with one downloads in full on every `--only-changed` run.
 - Two `--only-changed` runs without a lock can race on the manifest: the last writer wins, and a lost entry causes one extra download on a later run. Use `--lock-file` with `--only-changed`.
 
 ### Shared-path lock (`--lock-file`)
@@ -168,13 +169,15 @@ Recommended for daily runs and for targets shared between hosts or containers:
 - Without `--lock-file`, bash, Python, Go and PowerShell keep their default lock in the system temp directory (turned off with `--no-lock` / `-NoLock`); the POSIX script takes no lock.
 - In the clients that have `--no-lock` (bash, Python, Go; PowerShell `-NoLock`), combining it with `--lock-file` (or `GEOIP_LOCK_FILE`) exits `1` with `--lock-file and --no-lock cannot be combined`. The POSIX script has no `--no-lock`.
 - Shell clients (POSIX, bash):
-  - They use `flock` when the command exists. Where `flock` is missing (for example macOS), they lock by creating the directory `PATH.d`, removed on exit. A lock directory left by a killed run is broken as stale after the download ceiling (`--timeout`, default `1800`) plus 300 s.
-  - If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+  - They use `flock` when the command exists. Where `flock` is missing (for example macOS), they lock by creating the directory `PATH.d`, removed on exit. While the run lives it rewrites the Unix timestamp in `PATH.d/started` every 60 s. A waiter breaks the directory as stale once that timestamp is older than 300 s, so a killed run's directory is broken after about 5 minutes and a live run's never is, whatever `--timeout` is.
+  - With `flock`, if only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+  - With the `mkdir` fallback, TERM or INT to the main process removes `PATH.d` as it exits, while its background downloads may still be running.
 
 ### Atomic staging
 
 - Every client downloads into `<target>/<name>.part` and renames it to `<target>/<name>`, so a reader sees either the previous complete file or the new complete file, never a partial one. The `.part` file exists only while the download runs.
 - A download that finally fails removes its `.part`.
+- On Windows, when `<name>.part` cannot be removed (for example because another run has it open), the Go client stages in a private `<name>.part.<random>` instead. One left by a crashed run stays in the target directory until deleted by hand.
 - A resumed download sends `If-Range`. If the object changed mid-download, the file restarts from byte 0 (counted as a retry), so a file is never mixed from two versions.
 
 ### What `--timeout` does, per client

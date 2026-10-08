@@ -127,9 +127,10 @@ With `--lock-file PATH` set, the client takes an exclusive kernel lock on `PATH`
 **Shell fallback, when no `flock` command exists (for example macOS):**
 - Take the lock with `mkdir "$PATH.d"`, which is atomic, and write a timestamp into it.
 - Remove the directory with a `trap` on `EXIT`, `INT`, `TERM` and `HUP`.
-- A waiter treats `$PATH.d` as stale, removes it and retries once its timestamp is older than the holder's download ceiling (`--timeout`, default 1800 s) plus 300 s. This covers `kill -9`, where no trap runs.
+- While the main shell lives, a background heartbeat rewrites the timestamp every 60 s; it exits when the main shell is gone and is stopped when the lock is released.
+- A waiter treats `$PATH.d` as stale, removes it and retries once its timestamp is older than 300 s, independent of `--timeout`. This covers `kill -9`, where no trap runs, and never breaks a live run's lock.
 - In both shell clients (POSIX, bash), background download jobs inherit the lock. If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`). This is documented, not changed.
-- Two test-only environment variables exist and are not documented in user-facing docs. `GEOIP_LOCK_FORCE_FALLBACK=1` selects the fallback on hosts that do have `flock`, so CI can exercise it. `GEOIP_LOCK_STALE_SECONDS` overrides the stale threshold, so a test can prove a killed holder's lock expires without waiting 35 minutes.
+- Two test-only environment variables exist and are not documented in user-facing docs. `GEOIP_LOCK_FORCE_FALLBACK=1` selects the fallback on hosts that do have `flock`, so CI can exercise it. `GEOIP_LOCK_STALE_SECONDS` overrides the stale threshold (the heartbeat interval is a fifth of it), so a test can prove a killed holder's lock expires without waiting 5 minutes.
 
 **Interaction with the existing lock:**
 - Without `--lock-file`, bash, Python, Go and PowerShell keep today's PID lock and `--no-lock`, and POSIX keeps no lock.

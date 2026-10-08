@@ -157,7 +157,7 @@ The server answered the conditional request (`If-None-Match` with the ETag in `<
 ```
 
 ### Every `--only-changed` run downloads everything
-A database downloads when its file is missing, the manifest has no entry for it, or its size on disk differs from the entry. A manifest that cannot be read is treated as absent and rewritten at the end of the run. Check that `<target>/.geoip-update.json` exists after a run and that the target directory is writable. Without `--only-changed` no manifest is read or written.
+A database downloads when its file is missing, the manifest has no entry for it, or its size on disk differs from the entry. A manifest that cannot be read is treated as absent and rewritten at the end of the run. Check that `<target>/.geoip-update.json` exists after a run and that the target directory is writable. A weak ETag (`W/"…"`) is not recorded, so a file served with one downloads in full every run. Without `--only-changed` no manifest is read or written.
 
 ### `Timed out after N s waiting for lock PATH`
 Another run held the lock for longer than `--lock-timeout` (default `1800`). With the kernel lock, the lock file holds `pid=<pid> host=<hostname> started=<UTC time>` of the run that last took it; the shell `mkdir` fallback records only a Unix timestamp, in `PATH.d/started`:
@@ -170,11 +170,14 @@ The lock is released by the operating system when its holder exits, including af
 `--lock-file` or `GEOIP_LOCK_FILE` was set together with `--no-lock` / `-NoLock`. The run exits `1`. Unset one of them.
 
 ### Shell clients (Bash, POSIX): lock directory and background downloads
-- Where `flock` is not installed (for example macOS), the lock is the directory `PATH.d`. A directory left by a killed run is broken as stale after the download ceiling (`--timeout`, default `1800`) plus 300 s.
-- If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+- Where `flock` is not installed (for example macOS), the lock is the directory `PATH.d`. The holder rewrites the timestamp in `PATH.d/started` every 60 s while it runs; a waiter breaks the directory as stale once that timestamp is older than 300 s. A directory left by a killed run is therefore broken after about 5 minutes, and a live run keeps its lock however long it takes.
+- With `flock`, if only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).
+- With the `mkdir` fallback, TERM or INT to the main process removes `PATH.d` as it exits, while its background downloads may still be running. A run started meanwhile can take the lock.
 
 ### `<name>.part` files in the target directory
 Every client downloads into `<target>/<name>.part` and renames it into place when the download completes, so `<name>` is never a partial file. The `.part` exists while that database downloads; a download that finally fails removes it.
+
+On Windows, when `<name>.part` cannot be removed (for example because another run has it open), the Go client stages in a private `<name>.part.<random>` instead. One left by a crashed run is not cleaned up; delete it by hand when no run is active.
 
 ### What `--timeout` does
 | Client | `--timeout` / `-Timeout` |
