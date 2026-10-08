@@ -31,6 +31,7 @@ class FakeServer:
         self.files: dict[str, _File] = {}
         self._lock = threading.Lock()
         self._fail: dict[str, int] = {}
+        self._fail_times: dict[str, int] = {}
         self._fail_auth: int | None = None
         self._stall: dict[str, float] = {}
         self._slow: dict[str, float] = {}
@@ -57,6 +58,9 @@ class FakeServer:
 
     def fail(self, name: str, status: int):
         self._fail[name] = status
+
+    def fail_times(self, name: str, n: int):
+        self._fail_times[name] = n
 
     def fail_auth(self, status: int | None):
         self._fail_auth = status
@@ -119,9 +123,15 @@ class FakeServer:
                     return self._json(404, {"detail": "no such key"})
                 if name in server._fail:
                     return self._json(server._fail[name], {"detail": "injected"})
+                if server._fail_times.get(name, 0) > 0:
+                    server._fail_times[name] -= 1
+                    return self._json(500, {"detail": "injected"})
                 f = server.files[name]
                 st = server.stats(name)
                 rng = self.headers.get("Range")
+                if_range = self.headers.get("If-Range")
+                if rng and if_range is not None and if_range.strip().strip('"') != f.etag:
+                    rng = None
                 inm = (self.headers.get("If-None-Match") or "").strip().strip('"')
                 ims = self.headers.get("If-Modified-Since")
                 if rng == "bytes=0-0":
