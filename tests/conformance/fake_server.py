@@ -192,7 +192,7 @@ class FakeServer:
                     if i == 0 and len(body) > chunk and name in server._stall:
                         self.wfile.flush()
                         time.sleep(server._stall[name])
-                    if delay:
+                    if delay and i + chunk < len(body):
                         self.wfile.flush()
                         time.sleep(delay)
 
