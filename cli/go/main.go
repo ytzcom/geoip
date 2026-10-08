@@ -25,7 +25,7 @@ import (
 // Version is injected at build time via -ldflags -X. The Makefile injects a
 // bare "1.1.3" while the release workflow injects a "v1.1.3" tag, so callers
 // must use displayVersion() to render it with exactly one leading "v".
-var version = "1.1.3"
+var version = "1.2.0"
 
 // displayVersion returns version with exactly one leading "v", regardless of
 // whether it was injected with or without the prefix (avoids "vv1.1.3").
@@ -41,6 +41,8 @@ const (
 	defaultConcurrent = 2    // bandwidth-bound: fewer streams finish large files sooner
 )
 
+const defaultLockTimeout = 1800
+
 // Config holds the application configuration
 type Config struct {
 	APIKey        string
@@ -54,13 +56,18 @@ type Config struct {
 	Quiet         bool
 	Verbose       bool
 	NoLock        bool
+	OnlyChanged   bool
+	Force         bool
+	LockFile      string
+	LockTimeout   int
 }
 
 // DownloadResult represents the result of a database download
 type DownloadResult struct {
-	Database string
-	Size     int64
-	Error    error
+	Database  string
+	Size      int64
+	Unchanged bool
+	Error     error
 }
 
 // Logger handles logging with different levels
@@ -335,21 +342,18 @@ type GeoIPUpdater struct {
 	config     *Config
 	httpClient *HTTPClient
 	logger     *Logger
-	tempDir    string
+	manifest   map[string]manifestEntry
+	updates    map[string]manifestEntry
+	mu         sync.Mutex
 }
 
 func newGeoIPUpdater(config *Config, logger *Logger) (*GeoIPUpdater, error) {
-	// Create temp directory
-	tempDir, err := os.MkdirTemp("", "geoip-update-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp directory: %w", err)
-	}
-
 	return &GeoIPUpdater{
 		config:     config,
 		httpClient: newHTTPClient(config.Timeout, config.MaxRetries, logger),
 		logger:     logger,
-		tempDir:    tempDir,
+		manifest:   map[string]manifestEntry{},
+		updates:    map[string]manifestEntry{},
 	}, nil
 }
 
@@ -396,40 +400,132 @@ func (g *GeoIPUpdater) authenticate() (map[string]string, error) {
 	return urls, nil
 }
 
+func unquoteETag(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+func isWeakETag(etag string) bool {
+	return strings.HasPrefix(etag, "W/")
+}
+
+func (g *GeoIPUpdater) precheck(url, etag string) (status int, respETag string, lastModified string, total int64, err error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, "", "", 0, err
+	}
+	req.Header.Set("Range", "bytes=0-0")
+	if etag != "" {
+		req.Header.Set("If-None-Match", `"`+etag+`"`)
+	}
+	resp, err := g.httpClient.client.Do(req)
+	if err != nil {
+		return 0, "", "", 0, err
+	}
+	resp.Body.Close()
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		total, _ = strconv.ParseInt(cr[strings.LastIndex(cr, "/")+1:], 10, 64)
+	}
+	return resp.StatusCode, unquoteETag(resp.Header.Get("ETag")), resp.Header.Get("Last-Modified"), total, nil
+}
+
+func (g *GeoIPUpdater) isUnchanged(name, url, targetFile string) bool {
+	entry, ok := g.manifest[name]
+	if !ok || entry.ETag == "" {
+		return false
+	}
+	fi, err := os.Stat(targetFile)
+	if err != nil || fi.Size() != entry.Size {
+		return false
+	}
+	status, _, _, _, err := g.precheck(url, entry.ETag)
+	if err != nil {
+		g.logger.Info("%s: change check failed: %v", name, err)
+		return false
+	}
+	return status == http.StatusNotModified
+}
+
+func fileSize(f *os.File) int64 {
+	if fi, err := f.Stat(); err == nil {
+		return fi.Size()
+	}
+	return 0
+}
+
+func restartFile(f *os.File) error {
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	_, err := f.Seek(0, io.SeekStart)
+	return err
+}
+
+func ownsPath(f *os.File, path string) bool {
+	a, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(path)
+	return err == nil && os.SameFile(a, b)
+}
+
 func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) DownloadResult {
+	stageFile := filepath.Join(g.config.TargetDir, name+".part")
+	targetFile := filepath.Join(g.config.TargetDir, name)
+
+	if g.config.OnlyChanged && !g.config.Force && g.isUnchanged(name, url, targetFile) {
+		return DownloadResult{Database: name, Unchanged: true}
+	}
+
 	g.logger.Info("Downloading: %s", name)
 
-	tempFile := filepath.Join(g.tempDir, name)
-	targetFile := filepath.Join(g.config.TargetDir, name)
+	os.Remove(stageFile) // fresh start for this database
+	out, err := os.OpenFile(stageFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return DownloadResult{Database: name, Error: fmt.Errorf("failed to open staging file: %w", err)}
+	}
+	fail := func(err error) DownloadResult {
+		owned := ownsPath(out, stageFile)
+		out.Close()
+		if owned {
+			os.Remove(stageFile)
+		}
+		return DownloadResult{Database: name, Error: err}
+	}
 
 	// Resume on interruption/stall (HTTP Range) rather than restarting from
 	// byte 0, so large databases complete on flaky links. Retry while the
 	// transfer keeps making progress; give up only after a few consecutive
 	// no-progress attempts.
-	os.Remove(tempFile) // fresh start for this database
 	const maxNoProgress = 3
 	const hardCap = 50
 	noProgress := 0
+	restarts := 0
+	var etag, lastModified string
 	var lastErr error
 
 	for attempt := 1; ; attempt++ {
 		if attempt > hardCap {
-			return DownloadResult{Database: name, Error: fmt.Errorf("giving up after %d attempts: %w", hardCap, lastErr)}
+			return fail(fmt.Errorf("giving up after %d attempts: %w", hardCap, lastErr))
 		}
 
-		var offset int64
-		if fi, statErr := os.Stat(tempFile); statErr == nil {
-			offset = fi.Size()
-		}
+		offset := fileSize(out)
 
 		reqCtx, cancel := context.WithCancel(ctx)
 		req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 		if err != nil {
 			cancel()
-			return DownloadResult{Database: name, Error: fmt.Errorf("failed to create request: %w", err)}
+			return fail(fmt.Errorf("failed to create request: %w", err))
 		}
 		if offset > 0 {
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+			if etag != "" && !isWeakETag(etag) {
+				req.Header.Set("If-Range", `"`+etag+`"`)
+			}
 			g.logger.Info("Resuming %s from %d bytes (attempt %d)", name, offset, attempt)
 		}
 
@@ -440,7 +536,7 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 			lastErr = err
 			noProgress++
 			if noProgress >= maxNoProgress {
-				return DownloadResult{Database: name, Error: err}
+				return fail(err)
 			}
 			time.Sleep(5 * time.Second)
 			continue
@@ -453,18 +549,39 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 			break
 		}
 
-		// 206 resumes (append); 200 means the server sent the whole body, so
-		// start the file fresh.
-		var out *os.File
-		if resp.StatusCode == http.StatusPartialContent && offset > 0 {
-			out, err = os.OpenFile(tempFile, os.O_APPEND|os.O_WRONLY, 0o644)
-		} else {
-			out, err = os.Create(tempFile)
+		// A 200 to a resume, or a 206 for a different object, means the
+		// partial bytes cannot be kept.
+		respETag := unquoteETag(resp.Header.Get("ETag"))
+		changed := resp.StatusCode == http.StatusPartialContent && etag != "" && respETag != "" && respETag != etag
+		if offset > 0 && (resp.StatusCode == http.StatusOK || changed) {
+			restarts++
+			g.logger.Warn("%s: cannot resume (HTTP %d) - restarting from scratch", name, resp.StatusCode)
+			if restarts > g.config.MaxRetries {
+				resp.Body.Close()
+				cancel()
+				return fail(fmt.Errorf("giving up after %d restarts", g.config.MaxRetries))
+			}
+			noProgress = 0
+			if changed {
+				resp.Body.Close()
+				cancel()
+				etag = ""
+				if err := restartFile(out); err != nil {
+					return fail(fmt.Errorf("failed to reset staging file: %w", err))
+				}
+				continue
+			}
 		}
-		if err != nil {
-			resp.Body.Close()
-			cancel()
-			return DownloadResult{Database: name, Error: fmt.Errorf("failed to open temp file: %w", err)}
+
+		if resp.StatusCode == http.StatusOK {
+			etag = respETag
+			lastModified = resp.Header.Get("Last-Modified")
+			offset = 0
+			if err := restartFile(out); err != nil {
+				resp.Body.Close()
+				cancel()
+				return fail(fmt.Errorf("failed to reset staging file: %w", err))
+			}
 		}
 
 		// Copy through a stall guard: abort if no bytes arrive for
@@ -472,7 +589,6 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 		body := newIdleTimeoutReader(resp.Body, downloadIdleTimeout, cancel)
 		_, copyErr := io.Copy(out, body)
 		body.Stop()
-		out.Close()
 		resp.Body.Close()
 		cancel()
 
@@ -481,10 +597,7 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 		}
 
 		lastErr = copyErr
-		var cur int64
-		if fi, statErr := os.Stat(tempFile); statErr == nil {
-			cur = fi.Size()
-		}
+		cur := fileSize(out)
 		if cur > offset {
 			noProgress = 0
 			g.logger.Warn("%s: transfer interrupted at %d bytes - resuming (%v)", name, cur, copyErr)
@@ -492,35 +605,69 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 			noProgress++
 			g.logger.Warn("%s: no progress (attempt %d/%d): %v", name, noProgress, maxNoProgress, copyErr)
 			if noProgress >= maxNoProgress {
-				return DownloadResult{Database: name, Error: fmt.Errorf("failed to download: %w", copyErr)}
+				return fail(fmt.Errorf("failed to download: %w", copyErr))
 			}
 			time.Sleep(5 * time.Second)
 		}
 	}
 
-	fi, err := os.Stat(tempFile)
-	if err != nil || fi.Size() == 0 {
-		return DownloadResult{Database: name, Error: fmt.Errorf("downloaded file is empty")}
+	size := fileSize(out)
+	if size == 0 {
+		return fail(fmt.Errorf("downloaded file is empty"))
 	}
-	size := fi.Size()
 
 	// Basic validation for MMDB files
 	if strings.HasSuffix(name, ".mmdb") {
-		if err := g.validateMMDB(tempFile); err != nil {
+		if err := g.validateMMDB(stageFile); err != nil {
 			g.logger.Warn("MMDB validation warning for %s: %v", name, err)
 		}
 	}
 
-	// Move to target location
-	if err := os.Rename(tempFile, targetFile); err != nil {
-		// If rename fails (cross-device), copy instead
-		if err := g.copyFile(tempFile, targetFile); err != nil {
-			return DownloadResult{Database: name, Error: fmt.Errorf("failed to move file: %w", err)}
-		}
-		os.Remove(tempFile)
+	if err := g.install(out, stageFile, targetFile); err != nil {
+		return DownloadResult{Database: name, Error: fmt.Errorf("failed to move file: %w", err)}
+	}
+
+	if g.config.OnlyChanged {
+		g.mu.Lock()
+		g.updates[name] = manifestEntry{ETag: etag, LastModified: lastModified, Size: size}
+		g.mu.Unlock()
 	}
 
 	return DownloadResult{Database: name, Size: size}
+}
+
+// install closes out and moves the staged download to target.
+func (g *GeoIPUpdater) install(out *os.File, stage, target string) error {
+	if !ownsPath(out, stage) {
+		// Another run replaced stage: install from our own handle.
+		tmp, err := os.CreateTemp(filepath.Dir(stage), filepath.Base(stage)+".*")
+		if err != nil {
+			out.Close()
+			return err
+		}
+		if _, err = out.Seek(0, io.SeekStart); err == nil {
+			_, err = io.Copy(tmp, out)
+		}
+		out.Close()
+		if cerr := tmp.Close(); err == nil {
+			err = cerr
+		}
+		if err == nil {
+			err = os.Rename(tmp.Name(), target)
+		}
+		if err != nil {
+			os.Remove(tmp.Name())
+		}
+		return err
+	}
+	out.Close()
+	if err := os.Rename(stage, target); err != nil {
+		// If rename fails, copy instead
+		err = g.copyFile(stage, target)
+		os.Remove(stage)
+		return err
+	}
+	return nil
 }
 
 func (g *GeoIPUpdater) validateMMDB(path string) error {
@@ -592,6 +739,10 @@ func (g *GeoIPUpdater) updateDatabases() error {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 
+	if g.config.OnlyChanged {
+		g.manifest = loadManifest(g.config.TargetDir)
+	}
+
 	// Get download URLs
 	urls, err := g.authenticate()
 	if err != nil {
@@ -625,6 +776,9 @@ func (g *GeoIPUpdater) updateDatabases() error {
 			if result.Error != nil {
 				atomic.AddInt32(&failCount, 1)
 				g.logger.Error("Failed to download %s: %v", result.Database, result.Error)
+			} else if result.Unchanged {
+				atomic.AddInt32(&successCount, 1)
+				g.logger.Success("Unchanged: %s", result.Database)
 			} else {
 				atomic.AddInt32(&successCount, 1)
 				g.logger.Success("Successfully downloaded: %s (%d bytes)", result.Database, result.Size)
@@ -635,6 +789,19 @@ func (g *GeoIPUpdater) updateDatabases() error {
 	// Wait for all downloads
 	wg.Wait()
 	close(results)
+
+	if g.config.OnlyChanged {
+		for name, entry := range g.updates {
+			if entry.ETag == "" || isWeakETag(entry.ETag) {
+				delete(g.manifest, name)
+			} else {
+				g.manifest[name] = entry
+			}
+		}
+		if err := writeManifest(g.config.TargetDir, g.manifest); err != nil {
+			g.logger.Error("Failed to write manifest: %v", err)
+		}
+	}
 
 	// Summary
 	total := len(urls)
@@ -648,13 +815,6 @@ func (g *GeoIPUpdater) updateDatabases() error {
 	}
 
 	return nil
-}
-
-func (g *GeoIPUpdater) cleanup() {
-	if g.tempDir != "" {
-		g.logger.Info("Cleaning up temporary files")
-		os.RemoveAll(g.tempDir)
-	}
 }
 
 // timeoutValue is a flag.Value for --timeout/-t that accepts either a bare
@@ -689,8 +849,44 @@ func (t *timeoutValue) Set(s string) error {
 	return nil
 }
 
+func envInt(key string, def int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: want an integer", key, value)
+	}
+	return n, nil
+}
+
 func parseFlags() (*Config, error) {
 	config := &Config{}
+
+	retries, err := envInt("GEOIP_MAX_RETRIES", defaultRetries)
+	if err != nil {
+		return nil, err
+	}
+	concurrent, err := envInt("GEOIP_CONCURRENT", defaultConcurrent)
+	if err != nil {
+		return nil, err
+	}
+	lockTimeout, err := envInt("GEOIP_LOCK_TIMEOUT", defaultLockTimeout)
+	if err != nil {
+		return nil, err
+	}
+	timeout := &timeoutValue{d: defaultTimeout * time.Second}
+	if value := os.Getenv("GEOIP_TIMEOUT"); value != "" {
+		if err := timeout.Set(value); err != nil {
+			return nil, fmt.Errorf("invalid GEOIP_TIMEOUT: %w", err)
+		}
+	}
+	onlyChanged := false
+	switch os.Getenv("GEOIP_ONLY_CHANGED") {
+	case "true", "1", "yes":
+		onlyChanged = true
+	}
 
 	// Define flags
 	flag.StringVar(&config.APIKey, "api-key", os.Getenv("GEOIP_API_KEY"), "API key (or use GEOIP_API_KEY env var)")
@@ -702,20 +898,19 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&config.TargetDir, "directory", getEnvOrDefault("GEOIP_TARGET_DIR", defaultTargetDir), "Target directory")
 	flag.StringVar(&config.TargetDir, "d", getEnvOrDefault("GEOIP_TARGET_DIR", defaultTargetDir), "Target directory (short)")
 	
-	databases := flag.String("databases", "all", "Comma-separated database list or 'all'")
-	flag.StringVar(databases, "b", "all", "Databases (short)")
+	databases := flag.String("databases", getEnvOrDefault("GEOIP_DATABASES", "all"), "Comma-separated database list or 'all'")
+	flag.StringVar(databases, "b", getEnvOrDefault("GEOIP_DATABASES", "all"), "Databases (short)")
 	
 	flag.StringVar(&config.LogFile, "log-file", os.Getenv("GEOIP_LOG_FILE"), "Log file path")
 	flag.StringVar(&config.LogFile, "l", os.Getenv("GEOIP_LOG_FILE"), "Log file (short)")
 	
-	flag.IntVar(&config.MaxRetries, "retries", defaultRetries, "Max retries")
-	flag.IntVar(&config.MaxRetries, "r", defaultRetries, "Max retries (short)")
+	flag.IntVar(&config.MaxRetries, "retries", retries, "Max retries")
+	flag.IntVar(&config.MaxRetries, "r", retries, "Max retries (short)")
 	
-	timeout := &timeoutValue{d: defaultTimeout * time.Second}
 	flag.Var(timeout, "timeout", "Download timeout: seconds (e.g. 1800) or duration (e.g. 5m, 300s)")
 	flag.Var(timeout, "t", "Download timeout (short)")
 	
-	flag.IntVar(&config.MaxConcurrent, "concurrent", defaultConcurrent, "Max concurrent downloads")
+	flag.IntVar(&config.MaxConcurrent, "concurrent", concurrent, "Max concurrent downloads")
 	
 	flag.BoolVar(&config.Quiet, "quiet", false, "Quiet mode")
 	flag.BoolVar(&config.Quiet, "q", false, "Quiet mode (short)")
@@ -725,6 +920,11 @@ func parseFlags() (*Config, error) {
 	
 	flag.BoolVar(&config.NoLock, "no-lock", false, "Don't use lock file")
 	flag.BoolVar(&config.NoLock, "n", false, "No lock (short)")
+
+	flag.BoolVar(&config.OnlyChanged, "only-changed", onlyChanged, "Download only databases that changed since the last run")
+	flag.BoolVar(&config.Force, "force", false, "Download everything even with --only-changed")
+	flag.StringVar(&config.LockFile, "lock-file", os.Getenv("GEOIP_LOCK_FILE"), "Lock on a shared path instead of the PID lock")
+	flag.IntVar(&config.LockTimeout, "lock-timeout", lockTimeout, "Seconds to wait for --lock-file")
 	
 	showVersion := flag.Bool("version", false, "Show version")
 	listDatabases := flag.Bool("list-databases", false, "List all available databases and aliases")
@@ -737,6 +937,10 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(validateOnly, "V", false, "Validate files (short)")
 	
 	flag.Parse()
+
+	if config.LockFile != "" && config.NoLock {
+		return nil, fmt.Errorf("--lock-file and --no-lock cannot be combined")
+	}
 
 	// Handle version flag
 	if *showVersion {
@@ -1276,12 +1480,21 @@ func main() {
 	logger.Info("GeoIP Update Script starting (v%s)", version)
 
 	// Acquire lock
-	lock := newLockFile(config.NoLock)
-	if err := lock.Acquire(); err != nil {
-		logger.Error("Failed to acquire lock: %v", err)
-		os.Exit(1)
+	if config.LockFile != "" {
+		lockFile, err := acquireSharedLock(config.LockFile, config.LockTimeout)
+		if err != nil {
+			logger.Error("%v", err)
+			os.Exit(1)
+		}
+		defer lockFile.Close()
+	} else {
+		lock := newLockFile(config.NoLock)
+		if err := lock.Acquire(); err != nil {
+			logger.Error("Failed to acquire lock: %v", err)
+			os.Exit(1)
+		}
+		defer lock.Release()
 	}
-	defer lock.Release()
 
 	// Create updater
 	updater, err := newGeoIPUpdater(config, logger)
@@ -1289,7 +1502,6 @@ func main() {
 		logger.Error("Failed to initialize updater: %v", err)
 		os.Exit(1)
 	}
-	defer updater.cleanup()
 
 	// Run update
 	if err := updater.updateDatabases(); err != nil {
