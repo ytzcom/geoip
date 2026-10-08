@@ -190,23 +190,30 @@ class SharedLock:
         self.path, self.timeout, self.handle = path, timeout, None
 
     def __enter__(self):
-        self.handle = open(self.path, "a+")
         waited = 0
         while True:
             try:
-                if msvcrt:
-                    self.handle.seek(0)
-                    msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError:
-                if waited >= self.timeout:
-                    self.handle.close()
-                    logger.error(f"Timed out after {self.timeout} s waiting for lock {self.path}")
+                self.handle = open(self.path, "a+")
+            except OSError as e:
+                if getattr(e, "winerror", None) not in (32, 33):
+                    logger.error(f"Cannot open lock file {self.path}: {e}")
                     sys.exit(1)
-                time.sleep(1)
-                waited += 1
+            else:
+                try:
+                    if msvcrt:
+                        self.handle.seek(0)
+                        msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    self.handle.close()
+                    self.handle = None
+            if waited >= self.timeout:
+                logger.error(f"Timed out after {self.timeout} s waiting for lock {self.path}")
+                sys.exit(1)
+            time.sleep(1)
+            waited += 1
         self.handle.seek(0)
         self.handle.truncate()
         self.handle.write(f"pid={os.getpid()} host={socket.gethostname()} started={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
