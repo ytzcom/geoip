@@ -327,6 +327,7 @@ load_config() {
                 ;;
         esac
     done < "$config_file"
+    return 0
 }
 
 # Validate configuration

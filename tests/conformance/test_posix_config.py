@@ -42,3 +42,10 @@ def test_explicit_only_changed_with_yaml_only_changed(client, server, target):
     result = _run_with_config(client, server, target, "only_changed: true\n", ["only_changed"])
     assert result.returncode == 0, result.stdout + result.stderr
     assert (target / ".geoip-update.json").exists()
+
+
+@pytest.mark.parametrize("client", POSIX)
+def test_last_yaml_key_overridden_by_flag(client, server, target):
+    result = _run_with_config(client, server, target, "api_key: from-yaml\n", [])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (target / "GeoIP2-City.mmdb").exists()
