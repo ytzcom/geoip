@@ -10,21 +10,21 @@ WORKDIR /build
 COPY cli/go/go.mod cli/go/go.sum ./
 RUN go mod download || true
 
-COPY cli/go/main.go .
+COPY cli/go/*.go ./
 
 # Build for AMD64
 RUN GOOS=linux GOARCH=amd64 go build \
     -ldflags="-s -w -X main.version=1.2.0" \
     -trimpath \
     -o geoip-update-amd64 \
-    main.go
+    .
 
 # Build for ARM64
 RUN GOOS=linux GOARCH=arm64 go build \
     -ldflags="-s -w -X main.version=1.2.0" \
     -trimpath \
     -o geoip-update-arm64 \
-    main.go
+    .
 
 # Stage 2: Prepare scripts
 FROM alpine:3.19 AS builder
