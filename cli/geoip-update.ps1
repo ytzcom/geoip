@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Downloads GeoIP databases from authenticated API
 
