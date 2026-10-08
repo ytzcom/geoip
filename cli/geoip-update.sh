@@ -17,6 +17,10 @@
 #   -v, --verbose           Verbose output
 #   -l, --log-file FILE     Log to file
 #   -n, --no-lock           Don't use lock file
+#       --lock-file PATH    Lock on a shared path instead (e.g. <dir>/.geoip-update.lock)
+#       --lock-timeout SEC  Wait limit for --lock-file in seconds (default: 1800)
+#       --only-changed      Download only databases that changed since the last run
+#       --force             Download every database, ignoring --only-changed
 #   -r, --retries NUM       Max retries (default: 3)
 #   -t, --timeout SEC       Overall download ceiling in seconds (default: 1800);
 #                           a download is aborted early only if it stalls (<1KB/s for 120s)
@@ -29,7 +33,14 @@
 #   GEOIP_API_KEY           API key for authentication
 #   GEOIP_API_ENDPOINT      API endpoint URL
 #   GEOIP_TARGET_DIR        Default target directory
+#   GEOIP_DATABASES         Default database list
+#   GEOIP_CONCURRENT        Parallel downloads (default: 2)
 #   GEOIP_LOG_FILE          Default log file
+#   GEOIP_TIMEOUT           Overall download ceiling in seconds
+#   GEOIP_MAX_RETRIES       Max retries
+#   GEOIP_ONLY_CHANGED      Download only changed databases (true, 1, yes)
+#   GEOIP_LOCK_FILE         Lock file path
+#   GEOIP_LOCK_TIMEOUT      Lock wait limit in seconds
 #
 # Examples:
 #   # Download all databases (production endpoint)
@@ -58,20 +69,26 @@ readonly DEFAULT_ENDPOINT="https://geoipdb.net/auth"
 readonly DEFAULT_TARGET_DIR="./geoip"
 readonly DEFAULT_RETRIES=3
 readonly DEFAULT_TIMEOUT=1800  # overall ceiling; stall detection (below) is the real guard
-readonly LOCK_FILE="/tmp/geoip-update.lock"
+readonly PID_LOCK_FILE="/tmp/geoip-update.lock"
 readonly TEMP_DIR_PREFIX="/tmp/geoip-update"
 
 # Configuration variables
 API_KEY="${GEOIP_API_KEY:-}"
 API_ENDPOINT="${GEOIP_API_ENDPOINT:-$DEFAULT_ENDPOINT}"
 TARGET_DIR="${GEOIP_TARGET_DIR:-$DEFAULT_TARGET_DIR}"
-DATABASES="all"
+DATABASES="${GEOIP_DATABASES:-all}"
 QUIET_MODE=false
 VERBOSE_MODE=false
 LOG_FILE="${GEOIP_LOG_FILE:-}"
 USE_LOCK=true
-MAX_RETRIES=$DEFAULT_RETRIES
-TIMEOUT=$DEFAULT_TIMEOUT
+MAX_RETRIES="${GEOIP_MAX_RETRIES:-$DEFAULT_RETRIES}"
+TIMEOUT="${GEOIP_TIMEOUT:-$DEFAULT_TIMEOUT}"
+TIMEOUT_SECONDS=0
+ONLY_CHANGED=false
+FORCE=false
+LOCK_FILE="${GEOIP_LOCK_FILE:-}"
+LOCK_TIMEOUT="${GEOIP_LOCK_TIMEOUT:-1800}"
+case "${GEOIP_ONLY_CHANGED:-}" in true|1|yes) ONLY_CHANGED=true ;; esac
 TEMP_DIR=""
 VALIDATE_ONLY_MODE=false
 CHECK_NAMES_MODE=false
@@ -169,6 +186,22 @@ parse_args() {
                 USE_LOCK=false
                 shift
                 ;;
+            --lock-file)
+                LOCK_FILE="$2"
+                shift 2
+                ;;
+            --lock-timeout)
+                LOCK_TIMEOUT="$2"
+                shift 2
+                ;;
+            --only-changed)
+                ONLY_CHANGED=true
+                shift
+                ;;
+            --force)
+                FORCE=true
+                shift
+                ;;
             -r|--retries)
                 MAX_RETRIES="$2"
                 shift 2
@@ -206,6 +239,16 @@ parse_args() {
 
 # Validate configuration
 validate_config() {
+    case "$TIMEOUT" in
+        ''|.|*.*.*|*[!0-9.]*) ;;
+        *)
+            TIMEOUT_SECONDS=$(printf '%s' "${TIMEOUT%%.*}" | sed 's/^0*//')
+            TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-0}
+            case "$TIMEOUT" in *.*[1-9]*) TIMEOUT_SECONDS=$((TIMEOUT_SECONDS + 1)) ;; esac
+            ;;
+    esac
+    case "$LOCK_TIMEOUT" in ''|*[!0-9]*) error "Invalid --lock-timeout/GEOIP_LOCK_TIMEOUT: '$LOCK_TIMEOUT' (expected a non-negative integer)" ;; esac
+
     if [[ -z "$API_KEY" ]]; then
         error "API key not provided. Use -k option or set GEOIP_API_KEY environment variable"
     fi
@@ -275,19 +318,19 @@ acquire_lock() {
     
     local lock_pid
     
-    if [[ -f "$LOCK_FILE" ]]; then
-        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
+    if [[ -f "$PID_LOCK_FILE" ]]; then
+        lock_pid=$(cat "$PID_LOCK_FILE" 2>/dev/null || echo "unknown")
         
         # Check if the process is still running
         if kill -0 "$lock_pid" 2>/dev/null; then
             error "Another instance is already running (PID: $lock_pid)"
         else
             log WARN "Removing stale lock file (PID: $lock_pid)"
-            rm -f "$LOCK_FILE"
+            rm -f "$PID_LOCK_FILE"
         fi
     fi
     
-    echo $$ > "$LOCK_FILE" || error "Failed to create lock file"
+    echo $$ > "$PID_LOCK_FILE" || error "Failed to create lock file"
     log INFO "Acquired lock (PID: $$)"
 }
 
@@ -296,13 +339,136 @@ release_lock() {
         return 0
     fi
     
-    if [[ -f "$LOCK_FILE" ]]; then
-        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
+    if [[ -f "$PID_LOCK_FILE" ]]; then
+        local lock_pid=$(cat "$PID_LOCK_FILE" 2>/dev/null || echo "unknown")
         if [[ "$lock_pid" == "$$" ]]; then
-            rm -f "$LOCK_FILE"
+            rm -f "$PID_LOCK_FILE"
             log INFO "Released lock"
         fi
     fi
+}
+
+LOCK_DIR_HELD=""
+
+lock_release() {
+    if [ -n "$LOCK_DIR_HELD" ]; then
+        rm -rf "$LOCK_DIR_HELD"
+        LOCK_DIR_HELD=""
+    fi
+}
+
+lock_acquire() {
+    [ -n "$LOCK_FILE" ] || return 0
+    waited=0
+    if command -v flock >/dev/null 2>&1 && [ -z "${GEOIP_LOCK_FORCE_FALLBACK:-}" ]; then
+        ( : >>"$LOCK_FILE" ) 2>/dev/null || { log ERROR "Cannot open lock file $LOCK_FILE"; return 1; }
+        exec 9>>"$LOCK_FILE"
+        until flock -n 9; do
+            if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
+                log ERROR "Timed out after $LOCK_TIMEOUT s waiting for lock $LOCK_FILE"
+                return 1
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
+        printf 'pid=%s host=%s started=%s\n' "$$" "$(uname -n)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_FILE"
+        return 0
+    fi
+    stale="${GEOIP_LOCK_STALE_SECONDS:-$((TIMEOUT_SECONDS + 300))}"
+    until mkdir "$LOCK_FILE.d" 2>/dev/null; do
+        now=$(date +%s)
+        held=$(cat "$LOCK_FILE.d/started" 2>/dev/null || echo "$now")
+        case "$held" in ''|*[!0-9]*) held=$now ;; esac
+        if [ $((now - held)) -gt "$stale" ]; then
+            if mv "$LOCK_FILE.d" "$LOCK_FILE.d.stale.$$" 2>/dev/null; then
+                rm -rf "$LOCK_FILE.d.stale.$$"
+            fi
+            continue
+        fi
+        if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
+            log ERROR "Timed out after $LOCK_TIMEOUT s waiting for lock $LOCK_FILE"
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    date +%s > "$LOCK_FILE.d/started.tmp" && mv "$LOCK_FILE.d/started.tmp" "$LOCK_FILE.d/started"
+    LOCK_DIR_HELD="$LOCK_FILE.d"
+}
+
+MANIFEST_ENTRIES=""
+
+manifest_load() {
+    MANIFEST_ENTRIES=""
+    m="$TARGET_DIR/.geoip-update.json"
+    [ -f "$m" ] || return 0
+    n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1))
+        case "$n:$line" in
+            '1:{'|'2:  "version": 1,'|'3:  "files": {') continue ;;
+        esac
+        case "$line" in
+            '  }'|'}') continue ;;
+        esac
+        entry=$(printf '%s\n' "$line" | sed -n 's/^    "\([^"]*\)": {"etag": "\([^"]*\)", "last_modified": "\([^"]*\)", "size": \([0-9][0-9]*\)},\{0,1\}$/\1|\2|\3|\4/p')
+        if [ -z "$entry" ]; then
+            log WARN "Ignoring unreadable manifest $m"
+            MANIFEST_ENTRIES=""
+            return 0
+        fi
+        MANIFEST_ENTRIES="${MANIFEST_ENTRIES}${entry}
+"
+    done < "$m"
+    [ "$n" -ge 5 ] || MANIFEST_ENTRIES=""
+}
+
+manifest_get() {
+    printf '%s' "$MANIFEST_ENTRIES" | grep "^$(printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g')|" | head -n 1
+}
+
+manifest_set() {
+    case "$1$2$3$4" in *[[:cntrl:]\|\"\\]*) return 0 ;; esac
+    MANIFEST_ENTRIES=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v "^$(printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g')|" || true)
+    MANIFEST_ENTRIES="${MANIFEST_ENTRIES:+$MANIFEST_ENTRIES
+}$1|$2|$3|$4
+"
+}
+
+manifest_write() {
+    m="$TARGET_DIR/.geoip-update.json"
+    entries=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v '^$' | LC_ALL=C sort || true)
+    total=$(printf '%s\n' "$entries" | grep -c . || true)
+    {
+        printf '{\n  "version": 1,\n  "files": {\n'
+        i=0
+        printf '%s\n' "$entries" | while IFS='|' read -r name etag lm size; do
+            [ -n "$name" ] || continue
+            i=$((i + 1))
+            comma=","
+            [ "$i" -lt "$total" ] || comma=""
+            printf '    "%s": {"etag": "%s", "last_modified": "%s", "size": %s}%s\n' "$name" "$etag" "$lm" "$size" "$comma"
+        done
+        printf '  }\n}\n'
+    } > "$m.part" && mv "$m.part" "$m" || {
+        log ERROR "Failed to write manifest $m"
+        rm -f "$m.part"
+        return 1
+    }
+}
+
+# precheck URL [ETAG] -> sets PC_STATUS, PC_ETAG, PC_LM, PC_TOTAL
+precheck() {
+    hdr=$(mktemp "${TEMP_DIR:-${TMPDIR:-/tmp}}/precheck.XXXXXX")
+    if [ -n "${2:-}" ]; then
+        PC_STATUS=$(curl -sS -o /dev/null -D "$hdr" -r 0-0 -H "If-None-Match: \"$2\"" --max-time 60 -w '%{http_code}' "$1" 2>/dev/null || true)
+    else
+        PC_STATUS=$(curl -sS -o /dev/null -D "$hdr" -r 0-0 --max-time 60 -w '%{http_code}' "$1" 2>/dev/null || true)
+    fi
+    PC_ETAG=$(tr -d '\r' < "$hdr" | sed -n 's/^[Ee][Tt][Aa][Gg]: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' | tail -n 1)
+    PC_LM=$(tr -d '\r' < "$hdr" | sed -n 's/^[Ll][Aa][Ss][Tt]-[Mm][Oo][Dd][Ii][Ff][Ii][Ee][Dd]: *//p' | tail -n 1)
+    PC_TOTAL=$(tr -d '\r' < "$hdr" | sed -n 's/^[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Rr][Aa][Nn][Gg][Ee]: *bytes [0-9]*-[0-9]*\/\([0-9]*\)$/\1/p' | tail -n 1)
+    rm -f "$hdr"
 }
 
 # Cleanup function
@@ -311,6 +477,7 @@ cleanup() {
     
     # Release lock
     release_lock
+    lock_release
     
     # Clean up temporary directory
     if [[ -d "$TEMP_DIR" ]]; then
@@ -484,7 +651,20 @@ download_database() {
     local db_name="$1"
     local url="$2"
     local target_file="$TARGET_DIR/$db_name"
-    local temp_file="$TEMP_DIR/$db_name"
+    local temp_file="$TARGET_DIR/$db_name.part"
+    local header_file="$TEMP_DIR/$db_name.headers"
+
+    if [[ "$ONLY_CHANGED" == true && "$FORCE" == false && -f "$target_file" ]]; then
+        local entry
+        entry=$(manifest_get "$db_name") || entry=""
+        if [[ -n "$entry" && "$(file_size_bytes "$target_file")" == "$(printf '%s' "$entry" | cut -d'|' -f4)" ]]; then
+            precheck "$url" "$(printf '%s' "$entry" | cut -d'|' -f2)"
+            if [[ "$PC_STATUS" == 304 ]]; then
+                log SUCCESS "Unchanged: $db_name"
+                return 0
+            fi
+        fi
+    fi
 
     log INFO "Downloading: $db_name"
     rm -f "$temp_file"
@@ -492,8 +672,12 @@ download_database() {
     local max_no_progress=3
     local hard_cap=50          # backstop against a pathological loop
     local no_progress=0
+    local restarts=0
     local attempt=0
     local success=false
+    local started etag="" last_modified="" response_etag
+    local prev_size cur_size max_time http_code curl_exit=1
+    started=$(date +%s)
 
     while true; do
         attempt=$((attempt + 1))
@@ -502,32 +686,66 @@ download_database() {
             break
         fi
 
-        local prev_size
+        max_time="$TIMEOUT"
+        if [[ $TIMEOUT_SECONDS -gt 0 && $attempt -gt 1 ]]; then
+            max_time=$((TIMEOUT_SECONDS - ($(date +%s) - started)))
+            if [[ $max_time -le 0 ]]; then
+                log ERROR "$db_name: giving up after $TIMEOUT s"
+                break
+            fi
+        fi
+
         prev_size=$(file_size_bytes "$temp_file")
 
         # Resume only when we already have partial bytes.
         local resume_opts=()
         if [[ "$prev_size" -gt 0 ]]; then
             resume_opts=(--continue-at -)
+            if [[ -n "$etag" ]]; then
+                resume_opts+=(--header "If-Range: \"$etag\"")
+            fi
             log INFO "Resuming $db_name from $prev_size bytes (attempt $attempt)"
         fi
 
         # Capture only stdout (the write-out code); --show-error sends any curl
         # error to the terminal. --speed-limit/--speed-time abort a stalled
         # transfer quickly so the resume loop can pick it back up.
-        local http_code curl_exit
+        rm -f "$header_file"
+        curl_exit=0
         http_code=$(curl --silent --show-error --location --fail \
             --connect-timeout 30 \
-            --max-time "$TIMEOUT" \
+            --max-time "$max_time" \
             --speed-limit 1024 --speed-time 120 \
             "${resume_opts[@]+"${resume_opts[@]}"}" \
+            --dump-header "$header_file" \
             --write-out "%{http_code}" \
             --output "$temp_file" \
-            "$url")
-        curl_exit=$?
+            "$url") || curl_exit=$?
 
-        local cur_size
         cur_size=$(file_size_bytes "$temp_file")
+
+        response_etag=""
+        if [[ -f "$header_file" ]]; then
+            response_etag=$(tr -d '\r' < "$header_file" | sed -n 's/^[Ee][Tt][Aa][Gg]: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' | tail -n 1)
+            if [[ "$prev_size" -eq 0 ]]; then
+                etag="$response_etag"
+                last_modified=$(tr -d '\r' < "$header_file" | sed -n 's/^[Ll][Aa][Ss][Tt]-[Mm][Oo][Dd][Ii][Ff][Ii][Ee][Dd]: *//p' | tail -n 1)
+            fi
+        fi
+
+        # Resume refused (curl 33), or the object changed (If-Range 200, or a 206 with another ETag).
+        if [[ "$prev_size" -gt 0 ]] && { [[ $curl_exit -eq 33 || "$http_code" == "200" ]] || [[ "$http_code" == "206" && -n "$etag" && -n "$response_etag" && "$response_etag" != "$etag" ]]; }; then
+            log WARN "$db_name: cannot resume (HTTP $http_code, curl exit $curl_exit) - restarting from scratch"
+            rm -f "$temp_file"
+            etag=""
+            no_progress=0
+            restarts=$((restarts + 1))
+            if [[ $restarts -gt $MAX_RETRIES ]]; then
+                log ERROR "$db_name: giving up after $MAX_RETRIES restarts"
+                break
+            fi
+            continue
+        fi
 
         # Success = a normal completion (curl 0 + 2xx) OR a resume where the
         # local file is already complete (S3 returns 416 Range Not Satisfiable).
@@ -539,17 +757,7 @@ download_database() {
         # Auth / expired presigned URL: not resumable, fail fast with guidance.
         if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
             log ERROR "$db_name: access denied (HTTP $http_code) - the download URL may have expired; re-run to refresh URLs"
-            return 1
-        fi
-
-        # Server ignored the Range request: curl 33 ("Cannot resume"), or a 200
-        # returned while we were resuming. The partial can't be continued, so
-        # discard it and restart from byte 0 on the next iteration.
-        if [[ $curl_exit -eq 33 ]] || { [[ "$prev_size" -gt 0 ]] && [[ "$http_code" == "200" ]]; }; then
-            log WARN "$db_name: server did not honor resume (HTTP $http_code, curl exit $curl_exit) - restarting from scratch"
-            rm -f "$temp_file"
-            no_progress=0
-            continue
+            break
         fi
 
         if [[ "$cur_size" -gt "$prev_size" ]]; then
@@ -565,9 +773,13 @@ download_database() {
         fi
     done
 
+    rm -f "$header_file"
+
     if [[ "$success" != true ]]; then
         log ERROR "Failed to download: $db_name"
-        return 1
+        rm -f "$temp_file"
+        [[ $curl_exit -ne 0 ]] || curl_exit=1
+        return "$curl_exit"
     fi
 
     local file_size
@@ -584,6 +796,7 @@ download_database() {
     elif [[ "$db_name" == *.BIN ]]; then
         if [[ $file_size -lt 1000 ]]; then
             log ERROR "BIN file $db_name is too small to be valid"
+            rm -f "$temp_file"
             return 1
         fi
     fi
@@ -593,6 +806,10 @@ download_database() {
         log ERROR "Failed to move $db_name to target directory"
         return 1
     }
+
+    if [[ "$ONLY_CHANGED" == true ]]; then
+        printf '%s|%s|%s|%s\n' "$db_name" "$etag" "$last_modified" "$file_size" >> "$TEMP_DIR/manifest.updates"
+    fi
 
     log SUCCESS "Successfully updated: $db_name"
     return 0
@@ -643,16 +860,19 @@ update_databases() {
         local failed_count=0
         local pids=()
         local max_parallel="${GEOIP_CONCURRENT:-2}"
+        local exit_code
+        local first_failure=0
         
         while IFS='|' read -r db_name url; do
             # Wait if we have too many parallel downloads
             while [[ ${#pids[@]} -ge $max_parallel ]]; do
                 for i in "${!pids[@]}"; do
                     if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-                        wait "${pids[$i]}"
-                        local exit_code=$?
+                        exit_code=0
+                        wait "${pids[$i]}" || exit_code=$?
                         if [[ $exit_code -ne 0 ]]; then
                             failed_count=$((failed_count + 1))
+                            [[ $first_failure -ne 0 ]] || first_failure=$exit_code
                         else
                             download_count=$((download_count + 1))
                         fi
@@ -671,19 +891,28 @@ update_databases() {
         
         # Wait for remaining downloads
         for pid in "${pids[@]}"; do
-            wait "$pid"
-            local exit_code=$?
+            exit_code=0
+            wait "$pid" || exit_code=$?
             if [[ $exit_code -ne 0 ]]; then
                 failed_count=$((failed_count + 1))
+                [[ $first_failure -ne 0 ]] || first_failure=$exit_code
             else
                 download_count=$((download_count + 1))
             fi
         done
         
+        if [[ "$ONLY_CHANGED" == true ]]; then
+            if [[ -f "$TEMP_DIR/manifest.updates" ]]; then
+                while IFS='|' read -r n e l s; do manifest_set "$n" "$e" "$l" "$s"; done < "$TEMP_DIR/manifest.updates"
+            fi
+            manifest_write || true
+        fi
+        
         log INFO "Download summary: $download_count successful, $failed_count failed"
         
         if [[ $failed_count -gt 0 ]]; then
-            error "Failed to download $failed_count databases"
+            log ERROR "Failed to download $failed_count databases"
+            exit "$first_failure"
         fi
 }
 
@@ -971,6 +1200,10 @@ check_database_names() {
 main() {
     parse_args "$@"
     
+    if [[ -n "$LOCK_FILE" && "$USE_LOCK" == "false" ]]; then
+        error "--lock-file and --no-lock cannot be combined"
+    fi
+    
     # Set quiet mode for logging
     if [[ "$QUIET_MODE" == "true" ]]; then
         VERBOSE_MODE=false
@@ -990,7 +1223,14 @@ main() {
     log INFO "GeoIP Update Script starting"
     
     validate_config
-    acquire_lock
+    if [[ -n "$LOCK_FILE" ]]; then
+        lock_acquire || exit 1
+    else
+        acquire_lock
+    fi
+    if [[ "$ONLY_CHANGED" == true ]]; then
+        manifest_load
+    fi
     update_databases
 }
 
