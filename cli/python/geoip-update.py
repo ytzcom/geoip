@@ -1093,10 +1093,10 @@ def main(api_key, endpoint, directory, databases, config, log_file, retries,
         config_obj.only_changed = True
     if os.environ.get('GEOIP_LOCK_FILE'):
         config_obj.lock_file = Path(os.environ['GEOIP_LOCK_FILE'])
-    for env_name, attr in (('GEOIP_CONCURRENT', 'max_concurrent'), ('GEOIP_TIMEOUT', 'timeout'),
-                           ('GEOIP_MAX_RETRIES', 'max_retries'), ('GEOIP_LOCK_TIMEOUT', 'lock_timeout')):
+    for env_name, attr, flag_value in (('GEOIP_CONCURRENT', 'max_concurrent', concurrent), ('GEOIP_TIMEOUT', 'timeout', timeout),
+                                       ('GEOIP_MAX_RETRIES', 'max_retries', retries), ('GEOIP_LOCK_TIMEOUT', 'lock_timeout', lock_timeout)):
         value = os.environ.get(env_name)
-        if value:
+        if value and flag_value is None:
             try:
                 setattr(config_obj, attr, int(value))
             except ValueError:
