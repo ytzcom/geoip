@@ -325,10 +325,15 @@ load_config() {
 
 # Validate configuration
 validate_config() {
-    case "$TIMEOUT" in ''|.*|*.|*.*.*|*[!0-9.]*) log ERROR "Invalid --timeout/GEOIP_TIMEOUT: '$TIMEOUT' (expected a non-negative number of seconds)"; return 1 ;; esac
-    TIMEOUT_SECONDS=$(printf '%s' "${TIMEOUT%%.*}" | sed 's/^0*//')
-    TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-0}
-    case "$TIMEOUT" in *.*[1-9]*) TIMEOUT_SECONDS=$((TIMEOUT_SECONDS + 1)) ;; esac
+    TIMEOUT_SECONDS=0
+    case "$TIMEOUT" in
+        ''|.|*.*.*|*[!0-9.]*) ;;
+        *)
+            TIMEOUT_SECONDS=$(printf '%s' "${TIMEOUT%%.*}" | sed 's/^0*//')
+            TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-0}
+            case "$TIMEOUT" in *.*[1-9]*) TIMEOUT_SECONDS=$((TIMEOUT_SECONDS + 1)) ;; esac
+            ;;
+    esac
     case "$LOCK_TIMEOUT" in ''|*[!0-9]*) log ERROR "Invalid --lock-timeout/GEOIP_LOCK_TIMEOUT: '$LOCK_TIMEOUT' (expected a non-negative integer)"; return 1 ;; esac
     case "$MAX_RETRIES" in ''|*[!0-9]*) log ERROR "Invalid --max-retries/GEOIP_MAX_RETRIES: '$MAX_RETRIES' (expected a non-negative integer)"; return 1 ;; esac
 
@@ -423,7 +428,9 @@ lock_acquire() {
         held=$(cat "$LOCK_FILE.d/started" 2>/dev/null || echo "$now")
         case "$held" in ''|*[!0-9]*) held=$now ;; esac
         if [ $((now - held)) -gt "$stale" ]; then
-            rm -rf "$LOCK_FILE.d"
+            if mv "$LOCK_FILE.d" "$LOCK_FILE.d.stale.$$" 2>/dev/null; then
+                rm -rf "$LOCK_FILE.d.stale.$$"
+            fi
             continue
         fi
         if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then

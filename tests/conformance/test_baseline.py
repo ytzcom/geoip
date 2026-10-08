@@ -91,3 +91,9 @@ def test_timeout_zero_is_unchanged(client, server, target):
 
 def test_decimal_timeout_is_unchanged(client, server, target):
     _timeout_run(client, server, target, "1.5")
+
+
+@pytest.mark.parametrize("value", [".5", "1e1"])
+@pytest.mark.parametrize("posix_client", ["posix-dash", "posix-busybox"])
+def test_unusual_timeout_is_unchanged(posix_client, server, target, value):
+    _timeout_run(posix_client, server, target, value)
