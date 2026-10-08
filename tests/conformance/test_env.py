@@ -110,3 +110,9 @@ def test_flag_beats_env(client, server, target):
     result = run(client, server, target, env={"GEOIP_DATABASES": "GeoIP2-City.mmdb"})
     assert result.returncode == 0, result.stdout + result.stderr
     assert sorted(p.name for p in target.iterdir()) == sorted(DBS)
+
+
+def test_flag_wins_over_invalid_env(client, server, target):
+    result = run(client, server, target, extra=[("max_retries", 2)], env={"GEOIP_MAX_RETRIES": "abc"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert sorted(p.name for p in target.iterdir()) == sorted(DBS)
