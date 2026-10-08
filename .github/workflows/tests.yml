@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 jobs:
   conformance:
@@ -21,12 +22,29 @@ jobs:
         run: docker build -f cli/go/Dockerfile cli/go
       - name: Build geoip-scripts image
         run: docker build -f docker-scripts/Dockerfile .
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
       - name: Go vet for linux, darwin and windows
         working-directory: cli/go
         run: |
           GOOS=linux go vet ./...
           GOOS=darwin go vet ./...
           GOOS=windows go vet ./...
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install Python client dependencies
+        run: python -m pip install -r cli/python/requirements.txt
+      - name: Go, Python, Windows PowerShell 5.1 and pwsh smoke checks
+        run: python tests/windows/smoke.py
