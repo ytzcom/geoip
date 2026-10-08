@@ -1,4 +1,5 @@
 import itertools
+import re
 
 import pytest
 
@@ -37,7 +38,7 @@ def test_manifest_written_by_one_client_is_read_by_another(writer, reader, prefi
     for n in NAMES:
         assert server.stats(n)["full"] == 0
         assert server.stats(n)["not_modified"] == 1
-        assert f"Unchanged: {n}" in result.stdout + result.stderr
+        assert re.search(rf"Unchanged: {re.escape(n)}$", result.stdout + result.stderr, re.MULTILINE), n
     assert (target / M).read_bytes() == written
 
 

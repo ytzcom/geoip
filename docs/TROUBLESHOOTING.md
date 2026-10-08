@@ -160,7 +160,7 @@ The server answered the conditional request (`If-None-Match` with the ETag in `<
 A database downloads when its file is missing, the manifest has no entry for it, or its size on disk differs from the entry. A manifest that cannot be read is treated as absent and rewritten at the end of the run. Check that `<target>/.geoip-update.json` exists after a run and that the target directory is writable. Without `--only-changed` no manifest is read or written.
 
 ### `Timed out after N s waiting for lock PATH`
-Another run held the lock for longer than `--lock-timeout` (default `1800`). The lock file holds `pid=<pid> host=<hostname> started=<UTC time>` of the run that last took it:
+Another run held the lock for longer than `--lock-timeout` (default `1800`). With the kernel lock, the lock file holds `pid=<pid> host=<hostname> started=<UTC time>` of the run that last took it; the shell `mkdir` fallback records only a Unix timestamp, in `PATH.d/started`:
 ```bash
 cat /var/lib/geoip/.geoip-update.lock
 ```

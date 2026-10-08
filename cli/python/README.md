@@ -137,7 +137,7 @@ Use configuration file:
 --chunk-size BYTES         Download chunk size (default: 8192)
 
 # Retry Logic
---max-retries NUM          Maximum retry attempts (default: 3)
+-r, --retries NUM          Maximum retry attempts (default: 3)
 --retry-delay SECONDS      Initial retry delay (default: 2.0)
 --retry-multiplier FLOAT   Retry delay multiplier (default: 2.0)
 
@@ -236,10 +236,10 @@ The tool supports intelligent database name resolution:
 ### Concurrent Downloads
 
 ```bash
-# Conservative (good for limited bandwidth)
+# Default (good for limited bandwidth)
 ./geoip-update.py --concurrent 2
 
-# Balanced (default)
+# Balanced
 ./geoip-update.py --concurrent 4
 
 # Aggressive (fast networks only)

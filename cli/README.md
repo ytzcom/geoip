@@ -164,9 +164,9 @@ Recommended for daily runs and for targets shared between hosts or containers:
 
 - The client takes an exclusive kernel lock on `PATH` (created if missing) before it reads the manifest or calls the API, and holds it until it exits. The operating system releases the lock when the process exits for any reason, including `kill -9`.
 - A second run waits for the lock, polling, for up to `--lock-timeout` seconds (default `1800`). When that expires it logs `Timed out after N s waiting for lock PATH` and exits `1`.
-- After taking the lock, the client writes `pid=<pid> host=<hostname> started=<UTC time>` into the lock file, for diagnosis only.
+- After taking the kernel lock, the client writes `pid=<pid> host=<hostname> started=<UTC time>` into the lock file, for diagnosis only. The shell `mkdir` fallback (below) records only a Unix timestamp, in `PATH.d/started`.
 - Without `--lock-file`, bash, Python, Go and PowerShell keep their default lock in the system temp directory (turned off with `--no-lock` / `-NoLock`); the POSIX script takes no lock.
-- `--lock-file` (or `GEOIP_LOCK_FILE`) together with `--no-lock` / `-NoLock` exits `1` with `--lock-file and --no-lock cannot be combined`.
+- In the clients that have `--no-lock` (bash, Python, Go; PowerShell `-NoLock`), combining it with `--lock-file` (or `GEOIP_LOCK_FILE`) exits `1` with `--lock-file and --no-lock cannot be combined`. The POSIX script has no `--no-lock`.
 - Shell clients (POSIX, bash):
   - They use `flock` when the command exists. Where `flock` is missing (for example macOS), they lock by creating the directory `PATH.d`, removed on exit. A lock directory left by a killed run is broken as stale after the download ceiling (`--timeout`, default `1800`) plus 300 s.
   - If only the main process is SIGKILLed, its running background downloads keep the lock until they finish (at most `--timeout`).

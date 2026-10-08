@@ -134,7 +134,7 @@ cat checksums-sha256.txt | grep "geoip-updater-linux-amd64"
 # Performance
 --timeout VALUE            HTTP timeout: seconds (e.g. 1800) or duration (e.g. 5m, 300s) (default: 30m0s)
 --retries, -r INT          Maximum retry attempts (default: 3)
---concurrent INT           Max concurrent downloads (default: 4)
+--concurrent INT           Max concurrent downloads (default: 2)
 --user-agent STRING        Custom User-Agent header
 
 # Output control
@@ -228,10 +228,10 @@ Details for every client: [CLI Overview](../README.md#-change-detection-shared-p
 ### Concurrent Downloads
 
 ```bash
-# Conservative (slow networks)
+# Default (slow networks)
 ./geoip-updater --concurrent 2
 
-# Balanced (default)
+# Balanced
 ./geoip-updater --concurrent 4
 
 # Aggressive (fast networks)

@@ -46,15 +46,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CLI (POSIX, bash): `--timeout` is the overall download ceiling across retry
   attempts. `0` means no ceiling; a value that is not a plain decimal number is
   passed to curl untouched, with no ceiling across attempts, as before.
-- CLI (bash): a permanent download error now fails after the retry loop (about
-  10 s, 3 attempts without progress) instead of at once; the exit code is
-  unchanged.
+- CLI (POSIX, bash): a permanent download error now fails after the retry loop
+  (3 attempts, about 11 s) instead of at once, because retries and resume now
+  run; the exit code is unchanged.
 - CLI (Python): a resumed request answered with a full `200` counts as a
   restart against `--retries`.
-- CLI (Python): an invalid value in a newly read integer variable
-  (`GEOIP_TIMEOUT`, `GEOIP_CONCURRENT`, `GEOIP_MAX_RETRIES`,
-  `GEOIP_LOCK_TIMEOUT`) fails the run with exit 2, as the matching flag does,
-  unless that flag is given.
+- CLI: a `GEOIP_*` variable a client did not read before takes effect when it
+  is set, and an invalid value in it now fails the run unless the matching
+  command-line option is given:
+  - POSIX (exit 1): `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`, `GEOIP_LOCK_TIMEOUT`;
+  - bash (exit 1): `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`, `GEOIP_LOCK_TIMEOUT`;
+  - Python (exit 2): `GEOIP_CONCURRENT`, `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`,
+    `GEOIP_LOCK_TIMEOUT`;
+  - Go (exit 1): `GEOIP_CONCURRENT`, `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`,
+    `GEOIP_LOCK_TIMEOUT`;
+  - PowerShell (exit 1): `GEOIP_CONCURRENT`, `GEOIP_TIMEOUT`,
+    `GEOIP_MAX_RETRIES`, `GEOIP_LOCK_TIMEOUT`.
 - CLI (POSIX): `VERSION` is `2.1.0-posix`.
 
 ### Fixed
@@ -80,8 +87,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   failure 2, lock timeout 1), and errors go to stderr and `-LogFile`.
 - CLI (PowerShell): `cmdkey` is called only where it exists, so Linux and macOS
   runs no longer print its warning.
-- CLI (Go, Python): an invalid `GEOIP_*` value no longer fails a run when the
-  matching command-line flag is given.
 - The `cli/python-cron` and `cli/python-k8s` symlinks to the Python client and
   its `requirements.txt` resolve again.
 - Docs: `cli/python-k8s/README.md` no longer lists `GEOIP_LOG_LEVEL`, which no
