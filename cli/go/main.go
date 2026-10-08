@@ -34,14 +34,13 @@ func displayVersion() string {
 }
 
 const (
-	defaultEndpoint   = "https://geoipdb.net/auth"
-	defaultTargetDir  = "./geoip"
-	defaultRetries    = 3
-	defaultTimeout    = 1800 // overall ceiling; downloadIdleTimeout is the stall guard
-	defaultConcurrent = 2    // bandwidth-bound: fewer streams finish large files sooner
+	defaultEndpoint    = "https://geoipdb.net/auth"
+	defaultTargetDir   = "./geoip"
+	defaultRetries     = 3
+	defaultTimeout     = 1800 // overall ceiling; downloadIdleTimeout is the stall guard
+	defaultConcurrent  = 2    // bandwidth-bound: fewer streams finish large files sooner
+	defaultLockTimeout = 1800
 )
-
-const defaultLockTimeout = 1800
 
 // Config holds the application configuration
 type Config struct {
@@ -473,8 +472,17 @@ func ownsPath(f *os.File, path string) bool {
 	return err == nil && os.SameFile(a, b)
 }
 
+// openStage opens <name>.part fresh, or a private <name>.part.* when an
+// existing <name>.part cannot be removed (held open by another run on Windows).
+func openStage(dir, name string, remove func(string) error) (*os.File, error) {
+	stage := filepath.Join(dir, name+".part")
+	if err := remove(stage); err != nil && !os.IsNotExist(err) {
+		return os.CreateTemp(dir, name+".part.*")
+	}
+	return os.OpenFile(stage, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+}
+
 func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) DownloadResult {
-	stageFile := filepath.Join(g.config.TargetDir, name+".part")
 	targetFile := filepath.Join(g.config.TargetDir, name)
 
 	if g.config.OnlyChanged && !g.config.Force && g.isUnchanged(name, url, targetFile) {
@@ -483,11 +491,11 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 
 	g.logger.Info("Downloading: %s", name)
 
-	os.Remove(stageFile) // fresh start for this database
-	out, err := os.OpenFile(stageFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+	out, err := openStage(g.config.TargetDir, name, os.Remove)
 	if err != nil {
 		return DownloadResult{Database: name, Error: fmt.Errorf("failed to open staging file: %w", err)}
 	}
+	stageFile := out.Name()
 	fail := func(err error) DownloadResult {
 		owned := ownsPath(out, stageFile)
 		out.Close()
@@ -542,11 +550,23 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 			continue
 		}
 
-		// 416 => the byte range is past EOF, i.e. we already have the whole file.
+		// 416 => the byte range is past EOF, i.e. we already have the whole
+		// file, unless no strong ETag ties those bytes to the current object.
 		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 			resp.Body.Close()
 			cancel()
-			break
+			if etag != "" && !isWeakETag(etag) {
+				break
+			}
+			restarts++
+			g.logger.Warn("%s: cannot resume (HTTP %d) - restarting from scratch", name, resp.StatusCode)
+			if restarts > g.config.MaxRetries {
+				return fail(fmt.Errorf("giving up after %d restarts", g.config.MaxRetries))
+			}
+			if err := restartFile(out); err != nil {
+				return fail(fmt.Errorf("failed to reset staging file: %w", err))
+			}
+			continue
 		}
 
 		// A 200 to a resume, or a 206 for a different object, means the
@@ -618,7 +638,7 @@ func (g *GeoIPUpdater) downloadDatabase(ctx context.Context, name, url string) D
 
 	// Basic validation for MMDB files
 	if strings.HasSuffix(name, ".mmdb") {
-		if err := g.validateMMDB(stageFile); err != nil {
+		if err := g.validateMMDB(out); err != nil {
 			g.logger.Warn("MMDB validation warning for %s: %v", name, err)
 		}
 	}
@@ -670,13 +690,7 @@ func (g *GeoIPUpdater) install(out *os.File, stage, target string) error {
 	return nil
 }
 
-func (g *GeoIPUpdater) validateMMDB(path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
+func (g *GeoIPUpdater) validateMMDB(file *os.File) error {
 	// Get file size
 	stat, err := file.Stat()
 	if err != nil {
@@ -849,37 +863,37 @@ func (t *timeoutValue) Set(s string) error {
 	return nil
 }
 
-func envInt(key string, def int) (int, error) {
+// envError is an invalid GEOIP_* value; it fails the run only when none of
+// flags was given on the command line.
+type envError struct {
+	err   error
+	flags []string
+}
+
+func envInt(key string, def int, envErrors *[]envError, flags ...string) int {
 	value := os.Getenv(key)
 	if value == "" {
-		return def, nil
+		return def
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
-		return 0, fmt.Errorf("invalid %s %q: want an integer", key, value)
+		*envErrors = append(*envErrors, envError{fmt.Errorf("invalid %s %q: want an integer", key, value), flags})
+		return def
 	}
-	return n, nil
+	return n
 }
 
 func parseFlags() (*Config, error) {
 	config := &Config{}
 
-	retries, err := envInt("GEOIP_MAX_RETRIES", defaultRetries)
-	if err != nil {
-		return nil, err
-	}
-	concurrent, err := envInt("GEOIP_CONCURRENT", defaultConcurrent)
-	if err != nil {
-		return nil, err
-	}
-	lockTimeout, err := envInt("GEOIP_LOCK_TIMEOUT", defaultLockTimeout)
-	if err != nil {
-		return nil, err
-	}
+	var envErrors []envError
+	retries := envInt("GEOIP_MAX_RETRIES", defaultRetries, &envErrors, "retries", "r")
+	concurrent := envInt("GEOIP_CONCURRENT", defaultConcurrent, &envErrors, "concurrent")
+	lockTimeout := envInt("GEOIP_LOCK_TIMEOUT", defaultLockTimeout, &envErrors, "lock-timeout")
 	timeout := &timeoutValue{d: defaultTimeout * time.Second}
 	if value := os.Getenv("GEOIP_TIMEOUT"); value != "" {
 		if err := timeout.Set(value); err != nil {
-			return nil, fmt.Errorf("invalid GEOIP_TIMEOUT: %w", err)
+			envErrors = append(envErrors, envError{fmt.Errorf("invalid GEOIP_TIMEOUT: %w", err), []string{"timeout", "t"}})
 		}
 	}
 	onlyChanged := false
@@ -937,6 +951,18 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(validateOnly, "V", false, "Validate files (short)")
 	
 	flag.Parse()
+
+	given := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	for _, e := range envErrors {
+		overridden := false
+		for _, name := range e.flags {
+			overridden = overridden || given[name]
+		}
+		if !overridden {
+			return nil, e.err
+		}
+	}
 
 	if config.LockFile != "" && config.NoLock {
 		return nil, fmt.Errorf("--lock-file and --no-lock cannot be combined")
@@ -1481,7 +1507,7 @@ func main() {
 
 	// Acquire lock
 	if config.LockFile != "" {
-		lockFile, err := acquireSharedLock(config.LockFile, config.LockTimeout)
+		lockFile, err := acquireSharedLock(config.LockFile, config.LockTimeout, logger)
 		if err != nil {
 			logger.Error("%v", err)
 			os.Exit(1)
