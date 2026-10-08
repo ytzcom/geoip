@@ -31,9 +31,10 @@ _FLAGS = {
     "force":        {"posix": "--force", "bash": "--force", "python": "--force", "go": "--force", "powershell": "-Force"},
     "lock_file":    {"posix": "--lock-file", "bash": "--lock-file", "python": "--lock-file", "go": "--lock-file", "powershell": "-LockFile"},
     "lock_timeout": {"posix": "--lock-timeout", "bash": "--lock-timeout", "python": "--lock-timeout", "go": "--lock-timeout", "powershell": "-LockTimeout"},
+    "quiet":        {"posix": None, "bash": None, "python": None, "go": None, "powershell": "-Quiet"},
 }
 
-_SWITCHES = {"no_lock", "only_changed", "force"}
+_SWITCHES = {"no_lock", "only_changed", "force", "quiet"}
 
 
 def family(client: str) -> str:

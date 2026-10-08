@@ -206,7 +206,7 @@ function Write-LogMessage {
     }
     elseif ($Level -eq 'ERROR') {
         # Always output errors, even in quiet mode
-        Write-Error $Message
+        [Console]::Error.WriteLine($Message)
     }
 }
 
@@ -452,7 +452,7 @@ function Test-FileBusy {
     while ($e.InnerException -and -not ($e -is [System.IO.IOException])) { $e = $e.InnerException }
     if (-not ($e -is [System.IO.IOException])) { return $false }
     $code = $e.HResult -band 0xFFFF
-    return ($code -eq 32 -or $code -eq 33 -or $e.HResult -eq 11)
+    return ($code -eq 32 -or $code -eq 33 -or $e.HResult -eq 11 -or $e.HResult -eq 35)
 }
 
 function Enter-SharedLock {
@@ -469,7 +469,11 @@ function Enter-SharedLock {
             break
         }
         catch {
-            if (-not (Test-FileBusy $_)) { throw }
+            if (-not (Test-FileBusy $_)) {
+                $cause = $_.Exception
+                if ($cause -is [System.Management.Automation.MethodInvocationException] -and $cause.InnerException) { $cause = $cause.InnerException }
+                throw "Cannot open lock file ${DisplayPath}: $($cause.Message)"
+            }
             if ($waited -ge $Timeout) { throw "Timed out after $Timeout s waiting for lock $DisplayPath" }
             Start-Sleep -Seconds 1
             $waited++
@@ -568,7 +572,7 @@ function Test-Unchanged {
     $client = $null; $resp = $null
     try {
         $client = [System.Net.Http.HttpClient]::new()
-        $client.Timeout = [TimeSpan]::FromSeconds(60)
+        $client.Timeout = [TimeSpan]::FromSeconds($(if ($Timeout -gt 0) { $Timeout } else { 60 }))
         $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
         $req.Headers.Range = [System.Net.Http.Headers.RangeHeaderValue]::new(0, 0)
         [void]$req.Headers.TryAddWithoutValidation('If-None-Match', '"' + $entry.etag + '"')
@@ -1486,23 +1490,26 @@ function Invoke-Cleanup {
 function Get-EnvInteger {
     param([string]$Name, [int]$Minimum = 0)
     $raw = [Environment]::GetEnvironmentVariable($Name)
-    try {
-        $value = [int]$raw
-    }
-    catch {
-        Exit-WithError -Message "Invalid $Name value: $raw"
-    }
-    if ($value -lt $Minimum) {
+    $value = 0
+    if (-not [int]::TryParse($raw, [System.Globalization.NumberStyles]::Integer, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value) -or $value -lt $Minimum) {
         Exit-WithError -Message "Invalid $Name value: $raw"
     }
     return $value
 }
 
 # Environment defaults; parameters given on the command line win
-if (-not $PSBoundParameters.ContainsKey('Databases') -and $env:GEOIP_DATABASES) {
-    $Databases = @($env:GEOIP_DATABASES)
+function Split-DatabaseNames {
+    param([string[]]$Names)
+    return @($Names | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
-$Databases = @($Databases | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+if (-not $PSBoundParameters.ContainsKey('Databases') -and $env:GEOIP_DATABASES) {
+    $fromEnv = Split-DatabaseNames -Names @($env:GEOIP_DATABASES)
+    if ($fromEnv.Count -gt 0) {
+        $Databases = $fromEnv
+    }
+}
+$Databases = Split-DatabaseNames -Names $Databases
 if (-not $PSBoundParameters.ContainsKey('MaxRetries') -and $env:GEOIP_MAX_RETRIES) {
     $MaxRetries = Get-EnvInteger -Name 'GEOIP_MAX_RETRIES'
 }
