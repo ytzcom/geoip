@@ -62,7 +62,7 @@ def _ps_quote(value) -> str:
 
 
 def _ps_command(args) -> list[str]:
-    return _BASE["powershell"] + [" ".join(["&", _ps_quote(_PS_SCRIPT), *args]) + "; exit $LASTEXITCODE"]
+    return _BASE["powershell"] + ["try { " + " ".join(["&", _ps_quote(_PS_SCRIPT), *args]) + "; exit [int]$LASTEXITCODE } catch { exit 1 }"]
 
 
 def command(client, server, target, databases, extra=()) -> list[str]:

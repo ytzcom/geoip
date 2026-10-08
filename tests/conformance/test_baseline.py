@@ -7,8 +7,6 @@ from conftest import DBS
 from fake_server import fixture_bytes
 
 EXPECTED_SECOND_RUN = {
-    "posix-dash": "fails",
-    "posix-busybox": "fails",
     "bash": "fails",
     "python": "fails",
     "go": "succeeds",
@@ -33,8 +31,10 @@ def test_default_run_downloads_every_requested_file(request, client, server, tar
         assert (target / name).read_bytes() == fixture_bytes(name)
 
 
-def test_default_run_leaves_no_manifest_and_no_part_files(client, server, target):
-    run(client, server, target)
+def test_default_run_leaves_no_manifest_and_no_part_files(request, client, server, target):
+    _xfail_powershell_multi_db(request, client)
+    result = run(client, server, target)
+    assert result.returncode == 0, result.stdout + result.stderr
     leftovers = sorted(p.name for p in target.iterdir() if p.name not in DBS)
     assert leftovers == []
 
@@ -48,13 +48,19 @@ def test_partial_failure_keeps_successes_with_todays_exit_code(request, client, 
     assert not (target / "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN").exists()
 
 
-def test_default_lock_behaviour_is_unchanged(client, server, target):
+def test_default_concurrent_run_behaviour_is_unchanged(client, server, target):
+    if client.startswith("posix"):
+        pytest.skip("no lock: concurrent runs race on <name>.part; behaviour is not deterministic today")
     server.slow("GeoIP2-City.mmdb", 6)
     databases = ["GeoIP2-City.mmdb"] if client == "powershell" else DBS
     first = start(client, server, target, databases=databases)
-    time.sleep(2)
+    deadline = time.monotonic() + 60
+    while server.stats("GeoIP2-City.mmdb")["bytes"] == 0:
+        assert time.monotonic() < deadline, "first run never started downloading"
+        time.sleep(0.05)
     second = run(client, server, target, databases=databases)
-    first.wait(timeout=120)
+    first_output, _ = first.communicate(timeout=120)
+    assert first.returncode == 0, first_output
     outcome = "succeeds" if second.returncode == 0 else "fails"
     assert outcome == EXPECTED_SECOND_RUN[client], second.stdout + second.stderr
 

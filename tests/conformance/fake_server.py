@@ -1,7 +1,6 @@
 import email.utils
 import hashlib
 import json
-import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

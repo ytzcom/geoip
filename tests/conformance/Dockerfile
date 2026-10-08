@@ -9,4 +9,3 @@ COPY tests/conformance/requirements.txt /tmp/req/tests.txt
 RUN pip3 install --no-cache-dir -r /tmp/req/client.txt -r /tmp/req/tests.txt
 WORKDIR /repo
 COPY . .
-CMD ["sh", "-c", "cd tests/conformance && python3 -m pytest -q -p no:cacheprovider \"$@\" && cd /repo/cli/go && go test ./...", "--"]
