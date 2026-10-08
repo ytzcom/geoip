@@ -195,7 +195,8 @@ class SharedLock:
             try:
                 self.handle = open(self.path, "a+")
             except OSError as e:
-                if getattr(e, "winerror", None) not in (32, 33):
+                busy = getattr(e, "winerror", None) in (32, 33) or (msvcrt and isinstance(e, PermissionError) and self.path.exists())
+                if not busy:
                     logger.error(f"Cannot open lock file {self.path}: {e}")
                     sys.exit(1)
             else:
