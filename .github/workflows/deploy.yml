@@ -169,6 +169,9 @@ jobs:
           export DOTENV_TOKEN="${{ secrets.DOTENV_TOKEN }}"
           export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
           export DOCKERHUB_PASSWORD="${{ secrets.DOCKERHUB_PASSWORD }}"
+          # Compose target for this host (nginx-proxy-manager). Override via the
+          # DEPLOY_TARGET repo variable if a host uses the bundled-nginx 'prod' stack.
+          DEPLOY_TARGET="${{ vars.DEPLOY_TARGET || 'npm' }}"
 
           # Handle deployment
           if [ -d "$DEPLOY_DIR" ]; then
@@ -192,7 +195,7 @@ jobs:
 
             # Run the deployment script
             echo "🚀 Running deployment script..."
-            bash deploy/docker-deploy.sh
+            bash deploy/docker-deploy.sh --target "$DEPLOY_TARGET"
           else
             # Initial deployment - clone and run
             echo "📥 Initial deployment - setting up repository..."
@@ -212,7 +215,7 @@ jobs:
             fi
 
             # Run deployment script
-            bash deploy/docker-deploy.sh
+            bash deploy/docker-deploy.sh --target "$DEPLOY_TARGET"
           fi
 
   check-deployment:
