@@ -39,3 +39,13 @@ def test_quiet_only_changed_records_successes_despite_a_failure(server, target):
     assert result.returncode == 2, result.stdout + result.stderr
     f = server.files[CITY]
     assert (target / ".geoip-update.json").read_text() == manifest.canonical({CITY: {"etag": f.etag, "last_modified": f.last_modified, "size": len(f.data)}})
+
+
+def test_decimal_timeout_from_env_matches_the_flag(server, tmp_path):
+    results = {}
+    for label, extra, env in (("flag", [("timeout", "1.5")], None), ("env", [], {"GEOIP_TIMEOUT": "1.5"})):
+        directory = tmp_path / label
+        directory.mkdir()
+        results[label] = run("powershell", server, directory, databases=[CITY], extra=extra, env=env)
+    assert results["flag"].returncode == 0, results["flag"].stdout + results["flag"].stderr
+    assert results["env"].returncode == results["flag"].returncode, results["env"].stdout + results["env"].stderr

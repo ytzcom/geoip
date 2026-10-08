@@ -1490,8 +1490,13 @@ function Invoke-Cleanup {
 function Get-EnvInteger {
     param([string]$Name, [int]$Minimum = 0)
     $raw = [Environment]::GetEnvironmentVariable($Name)
-    $value = 0
-    if (-not [int]::TryParse($raw, [System.Globalization.NumberStyles]::Integer, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value) -or $value -lt $Minimum) {
+    try {
+        $value = [System.Management.Automation.LanguagePrimitives]::ConvertTo($raw, [int])
+    }
+    catch {
+        Exit-WithError -Message "Invalid $Name value: $raw"
+    }
+    if ($value -lt $Minimum) {
         Exit-WithError -Message "Invalid $Name value: $raw"
     }
     return $value
