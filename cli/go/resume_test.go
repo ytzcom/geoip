@@ -88,7 +88,10 @@ func TestInstallAfterStageReplacedKeepsOwnData(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.WriteString("complete")
-	os.Remove(stage)
+	if err := os.Remove(stage); err != nil {
+		out.Close()
+		t.Skipf("an open stage cannot be replaced here: %v", err)
+	}
 	os.WriteFile(stage, []byte("par"), 0o644)
 
 	g := &GeoIPUpdater{logger: &Logger{quiet: true}}
