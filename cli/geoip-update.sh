@@ -437,7 +437,7 @@ manifest_set() {
 
 manifest_write() {
     m="$TARGET_DIR/.geoip-update.json"
-    entries=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v '^$' | LC_ALL=C sort || true)
+    entries=$(printf '%s' "$MANIFEST_ENTRIES" | grep -v '^$' | LC_ALL=C sort -t'|' -k1,1 || true)
     total=$(printf '%s\n' "$entries" | grep -c . || true)
     {
         printf '{\n  "version": 1,\n  "files": {\n'

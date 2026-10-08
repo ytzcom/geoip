@@ -91,6 +91,12 @@ class FakeServer:
             def log_message(self, *args):
                 pass
 
+            def handle(self):
+                try:
+                    super().handle()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
             def do_HEAD(self):
                 self.send_response(403)
                 self.send_header("Content-Length", "0")
