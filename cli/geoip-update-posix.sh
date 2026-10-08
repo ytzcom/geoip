@@ -52,6 +52,9 @@ FORCE=false
 LOCK_FILE="${GEOIP_LOCK_FILE:-}"
 LOCK_TIMEOUT="${GEOIP_LOCK_TIMEOUT:-1800}"
 case "${GEOIP_ONLY_CHANGED:-}" in true|1|yes) ONLY_CHANGED=true ;; esac
+ONLY_CHANGED_FLAG=false
+LOCK_FILE_FLAG=false
+LOCK_TIMEOUT_FLAG=false
 VALIDATE_ONLY=false
 CHECK_NAMES_MODE=false
 VALIDATE_ONLY_MODE=false
@@ -214,6 +217,7 @@ parse_arguments() {
                 ;;
             --only-changed)
                 ONLY_CHANGED=true
+                ONLY_CHANGED_FLAG=true
                 shift
                 ;;
             --force)
@@ -222,10 +226,12 @@ parse_arguments() {
                 ;;
             --lock-file)
                 LOCK_FILE="$2"
+                LOCK_FILE_FLAG=true
                 shift 2
                 ;;
             --lock-timeout)
                 LOCK_TIMEOUT="$2"
+                LOCK_TIMEOUT_FLAG=true
                 shift 2
                 ;;
             --check-names)
@@ -311,13 +317,13 @@ load_config() {
                 [ -z "$LOG_FILE" ] && LOG_FILE="$value"
                 ;;
             only_changed)
-                case "$value" in true|1|yes) ONLY_CHANGED=true ;; esac
+                [ "$ONLY_CHANGED_FLAG" = true ] || case "$value" in true|1|yes) ONLY_CHANGED=true ;; esac
                 ;;
             lock_file)
-                [ -z "$LOCK_FILE" ] && LOCK_FILE="$value"
+                [ -z "$LOCK_FILE" ] && { [ "$LOCK_FILE_FLAG" = true ] || LOCK_FILE="$value"; }
                 ;;
             lock_timeout)
-                [ "$LOCK_TIMEOUT" = "1800" ] && LOCK_TIMEOUT="$value"
+                [ "$LOCK_TIMEOUT" = "1800" ] && { [ "$LOCK_TIMEOUT_FLAG" = true ] || LOCK_TIMEOUT="$value"; }
                 ;;
         esac
     done < "$config_file"
