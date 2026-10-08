@@ -128,7 +128,7 @@ With `--lock-file PATH` set, the client takes an exclusive kernel lock on `PATH`
 - Take the lock with `mkdir "$PATH.d"`, which is atomic, and write a timestamp into it.
 - Remove the directory with a `trap` on `EXIT`, `INT`, `TERM` and `HUP`.
 - A waiter treats `$PATH.d` as stale, removes it and retries once its timestamp is older than the holder's download ceiling (`--timeout`, default 1800 s) plus 300 s. This covers `kill -9`, where no trap runs.
-- The test-only environment variable `GEOIP_LOCK_FORCE_FALLBACK=1` selects the fallback on hosts that do have `flock`, so CI can exercise it. It is not documented in user-facing docs.
+- Two test-only environment variables exist and are not documented in user-facing docs. `GEOIP_LOCK_FORCE_FALLBACK=1` selects the fallback on hosts that do have `flock`, so CI can exercise it. `GEOIP_LOCK_STALE_SECONDS` overrides the stale threshold, so a test can prove a killed holder's lock expires without waiting 35 minutes.
 
 **Interaction with the existing lock:**
 - Without `--lock-file`, bash, Python, Go and PowerShell keep today's PID lock and `--no-lock`, and POSIX keeps no lock.
@@ -209,7 +209,7 @@ A conformance suite, `tests/conformance/` (pytest), runs every client as a black
 4. **Locking:**
    - two runs with the same `--lock-file` serialise: the second waits, then finds everything unchanged;
    - `--lock-timeout` expiry exits 1 with the message;
-   - after `kill -9` of the lock holder, the next run proceeds immediately (shell fallback: after the stale threshold, shortened in the test with `--timeout`);
+   - after `kill -9` of the lock holder, the next run proceeds immediately (shell fallback: after the stale threshold, shortened in the test with `GEOIP_LOCK_STALE_SECONDS`);
    - `--lock-file` with `--no-lock` exits 1.
 5. **Atomic staging:** while a slowed download is in progress, the target name is either absent or the complete previous file, never partial.
 6. **Environment variables:** each unified variable changes the corresponding behaviour in every client.
