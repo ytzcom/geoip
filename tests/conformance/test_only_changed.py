@@ -26,6 +26,7 @@ def test_second_run_downloads_nothing_and_logs_unchanged(client, server, target)
     _ok(result)
     for n in DBS:
         assert server.stats(n)["full"] == 0
+        assert server.stats(n)["inm"] == 1
         assert server.stats(n)["not_modified"] == 1
         assert f"Unchanged: {n}" in result.stdout + result.stderr
 
@@ -80,8 +81,11 @@ def test_object_changing_mid_download_restarts_the_file(client, server, target):
 
 def test_entries_for_unrequested_files_are_kept(client, server, target):
     _ok(run(client, server, target, extra=["only_changed"]))
+    server.put("GeoIP2-City.mmdb", fixture_bytes("GeoIP2-City.mmdb", "v2"))
     _ok(run(client, server, target, databases=["GeoIP2-City.mmdb"], extra=["only_changed"]))
-    assert set(manifest.read(target / M)) == set(DBS)
+    entries = manifest.read(target / M)
+    assert set(entries) == set(DBS)
+    assert entries["GeoIP2-City.mmdb"]["etag"] == server.files["GeoIP2-City.mmdb"].etag
 
 
 def test_stale_part_file_still_ends_with_a_complete_file(client, server, target):

@@ -1,9 +1,7 @@
-import time
-
 import pytest
 
 from clients import run, start, flag
-from conftest import DBS
+from conftest import DBS, wait_for_bytes
 from fake_server import fixture_bytes
 
 EXPECTED_SECOND_RUN = {
@@ -54,10 +52,7 @@ def test_default_concurrent_run_behaviour_is_unchanged(client, server, target):
     server.slow("GeoIP2-City.mmdb", 6)
     databases = ["GeoIP2-City.mmdb"] if client == "powershell" else DBS
     first = start(client, server, target, databases=databases)
-    deadline = time.monotonic() + 60
-    while server.stats("GeoIP2-City.mmdb")["bytes"] == 0:
-        assert time.monotonic() < deadline, "first run never started downloading"
-        time.sleep(0.05)
+    wait_for_bytes(server, "GeoIP2-City.mmdb", first)
     second = run(client, server, target, databases=databases)
     first_output, _ = first.communicate(timeout=120)
     assert first.returncode == 0, first_output

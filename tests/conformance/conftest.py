@@ -10,9 +10,12 @@ from fake_server import FakeServer, fixture_bytes
 DBS = ("GeoIP2-City.mmdb", "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN")
 
 
-def wait_for_bytes(server, name, deadline=60):
+def wait_for_bytes(server, name, proc, deadline=15):
     end = time.monotonic() + deadline
     while server.stats(name)["bytes"] == 0:
+        if proc.poll() is not None:
+            output, _ = proc.communicate()
+            raise AssertionError(f"first run exited {proc.returncode} before downloading {name}:\n{output}")
         if time.monotonic() >= end:
             raise TimeoutError(f"no bytes of {name} served within {deadline} s")
         time.sleep(0.05)

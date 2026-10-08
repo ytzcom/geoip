@@ -91,8 +91,8 @@ def run(client, server, target, *, databases=("GeoIP2-City.mmdb", "IP2PROXY-IP-P
     return subprocess.run(cmd, capture_output=True, text=True, env=_env(env), timeout=timeout)
 
 
-def start(client, server, target, *, databases=("GeoIP2-City.mmdb", "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"), extra=(), env=None):
-    return subprocess.Popen(command(client, server, target, databases, extra), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=_env(env))
+def start(client, server, target, *, databases=("GeoIP2-City.mmdb", "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN"), extra=(), env=None, new_session=False):
+    return subprocess.Popen(command(client, server, target, databases, extra), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=_env(env), start_new_session=new_session)
 
 
 def available(client: str) -> bool:

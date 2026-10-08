@@ -31,6 +31,8 @@ class FakeServer:
         self.files: dict[str, _File] = {}
         self._lock = threading.Lock()
         self._fail: dict[str, int] = {}
+        self._fail_auth: int | None = None
+        self._stall: dict[str, float] = {}
         self._slow: dict[str, float] = {}
         self._change: dict[str, tuple[bytes, int]] = {}
         self._active = 0
@@ -56,6 +58,12 @@ class FakeServer:
     def fail(self, name: str, status: int):
         self._fail[name] = status
 
+    def fail_auth(self, status: int | None):
+        self._fail_auth = status
+
+    def stall(self, name: str, seconds: float):
+        self._stall[name] = seconds
+
     def slow(self, name: str, seconds_total: float):
         self._slow[name] = seconds_total
 
@@ -64,10 +72,11 @@ class FakeServer:
 
     def reset_stats(self):
         self._stats: dict[str, dict] = {}
+        self.auth_attempts = 0
         self.max_parallel = 0
 
     def stats(self, name: str) -> dict:
-        return self._stats.setdefault(name, {"full": 0, "prechecks": 0, "not_modified": 0, "ranges": 0, "bytes": 0})
+        return self._stats.setdefault(name, {"attempts": 0, "full": 0, "prechecks": 0, "inm": 0, "not_modified": 0, "ranges": 0, "bytes": 0})
 
     def _handler(self):
         server = self
@@ -88,6 +97,9 @@ class FakeServer:
                 raw = self.rfile.read(length)
                 if self.path.rstrip("/") != "/auth":
                     return self._json(404, {"detail": "not found"})
+                server.auth_attempts += 1
+                if server._fail_auth is not None:
+                    return self._json(server._fail_auth, {"detail": "injected"})
                 if self.headers.get("X-API-Key") != API_KEY:
                     return self._json(401, {"detail": "Invalid API key"})
                 try:
@@ -102,6 +114,7 @@ class FakeServer:
 
             def do_GET(self):
                 name = self.path.split("?")[0].removeprefix("/s3/")
+                server.stats(name)["attempts"] += 1
                 if name not in server.files:
                     return self._json(404, {"detail": "no such key"})
                 if name in server._fail:
@@ -113,6 +126,8 @@ class FakeServer:
                 ims = self.headers.get("If-Modified-Since")
                 if rng == "bytes=0-0":
                     st["prechecks"] += 1
+                if inm:
+                    st["inm"] += 1
                 if inm and inm == f.etag:
                     st["not_modified"] += 1
                     return self._empty(304, f)
@@ -164,6 +179,9 @@ class FakeServer:
                     self.wfile.write(body[i:i + chunk])
                     sent += len(body[i:i + chunk])
                     server.stats(name)["bytes"] += len(body[i:i + chunk])
+                    if i == 0 and len(body) > chunk and name in server._stall:
+                        self.wfile.flush()
+                        time.sleep(server._stall[name])
                     if delay:
                         self.wfile.flush()
                         time.sleep(delay)
