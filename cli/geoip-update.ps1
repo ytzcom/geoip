@@ -1524,7 +1524,7 @@ if (-not $PSBoundParameters.ContainsKey('Timeout') -and $env:GEOIP_TIMEOUT) {
 if ($env:GEOIP_CONCURRENT) {
     $script:MaxParallel = Get-EnvInteger -Name 'GEOIP_CONCURRENT' -Minimum 1
 }
-if (-not $PSBoundParameters.ContainsKey('OnlyChanged') -and @('true', '1', 'yes') -contains "$env:GEOIP_ONLY_CHANGED".Trim()) {
+if (-not $PSBoundParameters.ContainsKey('OnlyChanged') -and @('true', '1', 'yes') -ccontains "$env:GEOIP_ONLY_CHANGED") {
     $OnlyChanged = $true
 }
 if (-not $PSBoundParameters.ContainsKey('LockFile') -and $env:GEOIP_LOCK_FILE) {

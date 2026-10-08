@@ -106,6 +106,13 @@ def test_only_changed_false_from_env_writes_no_manifest(client, server, target):
     assert not (target / ".geoip-update.json").exists()
 
 
+@pytest.mark.parametrize("value", ["TRUE", "Yes", " true", "1 "])
+def test_only_changed_from_env_accepts_exact_values_only(client, server, target, value):
+    result = run(client, server, target, env={"GEOIP_ONLY_CHANGED": value})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (target / ".geoip-update.json").exists()
+
+
 def test_flag_beats_env(client, server, target):
     result = run(client, server, target, env={"GEOIP_DATABASES": "GeoIP2-City.mmdb"})
     assert result.returncode == 0, result.stdout + result.stderr
