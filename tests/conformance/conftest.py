@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,14 @@ from clients import CLIENTS, GO_BINARY, REPO, available
 from fake_server import FakeServer, fixture_bytes
 
 DBS = ("GeoIP2-City.mmdb", "IP2PROXY-IP-PROXYTYPE-COUNTRY.BIN")
+
+
+def wait_for_bytes(server, name, deadline=60):
+    end = time.monotonic() + deadline
+    while server.stats(name)["bytes"] == 0:
+        if time.monotonic() >= end:
+            raise TimeoutError(f"no bytes of {name} served within {deadline} s")
+        time.sleep(0.05)
 
 
 @pytest.fixture(scope="session", autouse=True)
