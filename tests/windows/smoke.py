@@ -34,6 +34,8 @@ def command(client, server, target, options):
         exe = "powershell.exe" if client == "powershell" else "pwsh"
         cmd = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(PS_SCRIPT),
                "-ApiKey", server.api_key, "-ApiEndpoint", server.endpoint, "-TargetDirectory", str(target), "-Databases", ",".join(DBS)]
+        if client == "powershell":
+            cmd.append("-Verbose")
     else:
         names = {"only_changed": "--only-changed", "lock_file": "--lock-file", "lock_timeout": "--lock-timeout", "max_retries": "--retries"}
         cmd = [str(GO_BINARY)] if client == "go" else [sys.executable, str(REPO / "cli/python/geoip-update.py")]

@@ -137,6 +137,8 @@ param(
 # Set error action preference
 $ErrorActionPreference = 'Stop'
 
+Add-Type -AssemblyName System.Net.Http
+
 # Clean and normalize the API endpoint
 $ApiEndpoint = $ApiEndpoint.TrimEnd('/', ' ', "`t", "`n", "`r")
 
@@ -817,6 +819,8 @@ function Invoke-ResumableDownload {
                 Write-Host "${leaf}: transfer interrupted at $cur bytes - resuming ($_)"
             }
             else {
+                $cause = $_.Exception.GetBaseException()
+                Write-Verbose "${leaf}: attempt $attempt failed: [$($cause.GetType().FullName)] $($cause.Message)"
                 $noProgress++
                 if ($noProgress -ge $maxNoProgress) { break }
                 Start-Sleep -Seconds 5
@@ -980,6 +984,8 @@ function Start-DatabaseDownload {
 
     $job = Start-Job -ScriptBlock {
         param($DatabaseName, $Url, $Directory, $TargetFile, $Timeout, $MaxRetries, $Functions)
+
+        Add-Type -AssemblyName System.Net.Http
 
         # Re-create the downloader inside this job's runspace.
         foreach ($name in $Functions.Keys) {
