@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2026--10--05%2000:38:45%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2026--10--12%2000:41:02%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-6-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
@@ -66,14 +66,6 @@ curl -s -X POST https://geoipdb.net/auth \
   -H "Content-Type: application/json" \
   -d '{"databases": "all"}'
 ```
-
-**Daily runs and shared volumes.** Every client (POSIX sh, Bash, Python, Go, PowerShell) can download only the databases that changed and lock a path that every updater of the directory shares:
-
-```bash
-./cli/geoip-update.sh -k YOUR_API_KEY -d /var/lib/geoip --only-changed --lock-file /var/lib/geoip/.geoip-update.lock
-```
-
-`--only-changed` (PowerShell `-OnlyChanged`, env `GEOIP_ONLY_CHANGED`) keeps a manifest, `<target>/.geoip-update.json`, and skips a database the server reports unchanged; `--force` (`-Force`) downloads everything. `--lock-file PATH` (`-LockFile`, `GEOIP_LOCK_FILE`) takes an exclusive kernel lock that is released when the run exits, even after `kill -9`; a second run waits up to `--lock-timeout SECONDS` (`-LockTimeout`, `GEOIP_LOCK_TIMEOUT`, default `1800`) and then exits `1`, and it cannot be combined with `--no-lock`. Downloads are staged as `<target>/<name>.part` and renamed into place, so readers never see a partial file. All clients read the same environment variables (`GEOIP_API_KEY`, `GEOIP_API_ENDPOINT`, `GEOIP_TARGET_DIR`, `GEOIP_DATABASES`, `GEOIP_CONCURRENT`, `GEOIP_LOG_FILE`, `GEOIP_TIMEOUT`, `GEOIP_MAX_RETRIES`, `GEOIP_ONLY_CHANGED`, `GEOIP_LOCK_FILE`, `GEOIP_LOCK_TIMEOUT`). Details per client, including what `--timeout` does in each: [cli/README.md](cli/README.md#-change-detection-shared-path-locking-and-staging).
 
 **Self-hosting your own deployment?** Point the same clients at your endpoint with `GEOIP_API_ENDPOINT` (or the Action's `auth-endpoint`) — see **Running your own instance** below.
 
@@ -282,4 +274,4 @@ This repository's **code** is licensed under the [MIT License](LICENSE). The Geo
 
 ---
 
-**Last Update:** 2026-10-05 00:38:45 UTC
+**Last Update:** 2026-10-12 00:41:02 UTC
