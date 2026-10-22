@@ -8,7 +8,8 @@ set -e
 DEPLOY_DIR="${DEPLOY_DIR:-/data/sites/live_projects/geoip-api}"
 REPO_URL="${REPO_URL:-git@github.com:ytzcom/geoip.git}"
 BRANCH="${BRANCH:-main}"
-COMPOSE_FILE="docker-compose.prod.yml"
+DEPLOY_TARGET="${DEPLOY_TARGET:-prod}"   # prod | npm  (override with --target)
+COMPOSE_FILE="${COMPOSE_FILE:-}"         # resolved from DEPLOY_TARGET below; explicit env override wins
 DOCKER_IMAGE="${DOCKER_IMAGE:-ytzcom/geoip-api:latest}"
 DOTENV_TOKEN="${DOTENV_TOKEN:-}"
 # Optional dotenv.ca integration. Override DOTENV_API_URL to point at your own
@@ -36,12 +37,45 @@ log_error() {
     echo -e "${RED}✗${NC} $1"
 }
 
+usage() {
+    cat <<USAGE
+Usage: $0 [--target prod|npm]
+
+  --target prod   Deploy with the bundled nginx reverse proxy (docker-compose.prod.yml) [default]
+  --target npm    Deploy behind an existing nginx-proxy-manager (docker-compose.npm.yml):
+                  no bundled nginx/SSL; the api joins the external nginx-proxy-manager_npm
+                  network and NPM proxies the public host to geoip-api:8080.
+
+Env overrides: DEPLOY_TARGET, COMPOSE_FILE, DEPLOY_DIR, BRANCH, DOTENV_TOKEN, DOCKER_IMAGE.
+USAGE
+}
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --target)   DEPLOY_TARGET="$2"; shift 2 ;;
+        --target=*) DEPLOY_TARGET="${1#*=}"; shift ;;
+        -h|--help)  usage; exit 0 ;;
+        *)          log_error "Unknown argument: $1"; usage; exit 2 ;;
+    esac
+done
+
+# Resolve compose file from target (an explicit COMPOSE_FILE env var wins)
+if [ -z "$COMPOSE_FILE" ]; then
+    case "$DEPLOY_TARGET" in
+        prod) COMPOSE_FILE="docker-compose.prod.yml" ;;
+        npm)  COMPOSE_FILE="docker-compose.npm.yml" ;;
+        *)    log_error "Invalid --target '$DEPLOY_TARGET' (expected: prod | npm)"; exit 2 ;;
+    esac
+fi
+
 # Main deployment process
 echo "🚀 GeoIP API Deployment"
 echo "======================="
 echo "Deploy directory: $DEPLOY_DIR"
 echo "Repository: $REPO_URL"
 echo "Branch: $BRANCH"
+echo "Deploy target: $DEPLOY_TARGET ($COMPOSE_FILE)"
 echo "Docker image: $DOCKER_IMAGE"
 if [ -n "$DOTENV_TOKEN" ]; then
     echo "dotenv.ca: Enabled (token provided)"
@@ -334,6 +368,18 @@ monitor_download_progress() {
     fi
 }
 
+# Query an API path from inside the container. Works even when no host port is
+# published (e.g. behind nginx-proxy-manager). $1 = path; prints body, returns 0 on 2xx.
+api_get() {
+    docker exec geoip-api python -c "import sys, requests
+try:
+    r = requests.get('http://localhost:8080$1', timeout=5)
+    sys.stdout.write(r.text)
+    sys.exit(0 if r.ok else 1)
+except Exception:
+    sys.exit(1)" 2>/dev/null
+}
+
 # Wait for containers to be healthy
 log_info "Waiting for containers to be healthy..."
 sleep 10
@@ -344,8 +390,6 @@ docker compose -f "$COMPOSE_FILE" --env-file secrets/.env ps
 
 # Health check with database download monitoring
 log_info "Performing health check (this may take several minutes if databases are downloading)..."
-HEALTH_CHECK_URL="http://localhost/health"
-READY_CHECK_URL="http://localhost/ready"
 MAX_ATTEMPTS=180  # Increased from 30 to 180 (6 minutes total with 2s delays)
 ATTEMPT=1
 DOWNLOAD_STATUS="unknown"
@@ -353,10 +397,10 @@ LAST_STATUS_CHECK=0
 SYSTEM_READY=false
 
 while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-    # Check health endpoint first
-    if curl -fs "$HEALTH_CHECK_URL" > /dev/null; then
+    # Check health endpoint first (from inside the container)
+    if api_get /health > /dev/null; then
         # System is healthy, now check readiness
-        READY_RESPONSE=$(curl -s "$READY_CHECK_URL" 2>/dev/null || echo '{}')
+        READY_RESPONSE=$(api_get /ready 2>/dev/null || echo '{}')
         
         # Try to parse the JSON response
         if echo "$READY_RESPONSE" | grep -q '"ready":true'; then
@@ -434,7 +478,11 @@ if [ -f "secrets/.env" ]; then
     # Extract first API key from .env file
     API_KEY=$(grep "^API_KEYS=" secrets/.env | cut -d'=' -f2 | cut -d',' -f1)
     if [ -n "$API_KEY" ]; then
-        AUTH_TEST=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" "http://localhost/auth")
+        AUTH_TEST=$(docker exec geoip-api python -c "import requests
+try:
+    print(requests.get('http://localhost:8080/auth', headers={'X-API-Key': '$API_KEY'}, timeout=5).status_code)
+except Exception:
+    print('000')" 2>/dev/null)
         if [ "$AUTH_TEST" = "200" ]; then
             log_info "API authentication test passed!"
         else
