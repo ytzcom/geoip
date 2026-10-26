@@ -1,7 +1,7 @@
 # GeoIP Database Updater
 
 ![Workflow Status](https://github.com/ytzcom/geoip/workflows/Update%20GeoIP%20Databases/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Update-2026--10--19%2000:33:41%20UTC-blue)
+![Last Update](https://img.shields.io/badge/Last%20Update-2026--10--26%2000:32:37%20UTC-blue)
 ![Database Count](https://img.shields.io/badge/Databases-6-green)
 ![MaxMind Databases](https://img.shields.io/badge/MaxMind-4-orange)
 ![IP2Location Databases](https://img.shields.io/badge/IP2Location-2-purple)
@@ -122,9 +122,9 @@ The API loads its settings from an `.env` file. Provide it manually (`secrets/.e
 
 | Database | Provider | Format | Size | Description |
 |----------|----------|--------|------|-------------|
-| GeoIP2-City | MaxMind | MMDB | 120MB | City-level IP geolocation data |
-| GeoIP2-Country | MaxMind | MMDB | 8MB | Country-level IP geolocation data |
-| GeoIP2-ISP | MaxMind | MMDB | 19MB | ISP and organization data |
+| GeoIP2-City | MaxMind | MMDB | 103MB | City-level IP geolocation data |
+| GeoIP2-Country | MaxMind | MMDB | 3MB | Country-level IP geolocation data |
+| GeoIP2-ISP | MaxMind | MMDB | 12MB | ISP and organization data |
 | GeoIP2-Connection-Type | MaxMind | MMDB | 3MB | Connection type data |
 | DB23 IPv4 | IP2Location | BIN | 638MB | Comprehensive IPv4 geolocation data |
 | DB23 IPv6 | IP2Location | BIN | 829MB | Comprehensive IPv6 geolocation data |
@@ -274,4 +274,4 @@ This repository's **code** is licensed under the [MIT License](LICENSE). The Geo
 
 ---
 
-**Last Update:** 2026-10-19 00:33:41 UTC
+**Last Update:** 2026-10-26 00:32:37 UTC
